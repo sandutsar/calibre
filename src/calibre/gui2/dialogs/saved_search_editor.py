@@ -3,15 +3,15 @@
 
 
 from qt.core import (
-    QFormLayout, QIcon, QLabel, QLineEdit, QListWidget, Qt, QVBoxLayout, QDialog,
-    QDialogButtonBox, QPlainTextEdit
+    QDialog, QDialogButtonBox, QFormLayout, QIcon, QLabel, QLineEdit, QListWidget,
+    QPlainTextEdit, Qt, QVBoxLayout,
 )
 
 from calibre import prepare_string_for_xml
 from calibre.gui2 import error_dialog
 from calibre.gui2.dialogs.confirm_delete import confirm
 from calibre.gui2.widgets2 import Dialog
-from calibre.utils.icu import sort_key
+from calibre.utils.icu import lower as icu_lower, sort_key
 
 
 def commit_searches(searches):
@@ -100,15 +100,15 @@ class SavedSearchEditor(Dialog):
         db = get_gui().current_db
         self.l = l = QVBoxLayout(self)
         b = self.bb.addButton(_('&Add search'), QDialogButtonBox.ButtonRole.ActionRole)
-        b.setIcon(QIcon(I('plus.png')))
+        b.setIcon(QIcon.ic('search_add_saved.png'))
         b.clicked.connect(self.add_search)
 
         b = self.bb.addButton(_('&Remove search'), QDialogButtonBox.ButtonRole.ActionRole)
-        b.setIcon(QIcon(I('minus.png')))
+        b.setIcon(QIcon.ic('search_delete_saved.png'))
         b.clicked.connect(self.del_search)
 
         b = self.bb.addButton(_('&Edit search'), QDialogButtonBox.ButtonRole.ActionRole)
-        b.setIcon(QIcon(I('modified.png')))
+        b.setIcon(QIcon.ic('modified.png'))
         b.clicked.connect(self.edit_search)
 
         self.slist = QListWidget(self)

@@ -45,9 +45,11 @@ def strip_encoding_declarations(raw, limit=50*1024, preserve_newlines=False):
     is_binary = isinstance(raw, bytes)
     if preserve_newlines:
         if is_binary:
-            sub = lambda m: b'\n' * m.group().count(b'\n')
+            def sub(m):
+                return (b'\n' * m.group().count(b'\n'))
         else:
-            sub = lambda m: '\n' * m.group().count('\n')
+            def sub(m):
+                return ('\n' * m.group().count('\n'))
     else:
         sub = b'' if is_binary else ''
     for pat in lazy_encoding_pats(is_binary):
@@ -103,16 +105,18 @@ _CHARSET_ALIASES = {"macintosh" : "mac-roman", "x-sjis" : "shift-jis"}
 
 
 def detect(bytestring):
-    from cchardet import detect as implementation
-    ans = implementation(bytestring)
-    enc = ans.get('encoding')
-    if enc:
-        ans['encoding'] = enc.lower()
-    elif enc is None:
-        ans['encoding'] = ''
-    if ans.get('confidence') is None:
-        ans['confidence'] = 0
-    return ans
+    if isinstance(bytestring, str):
+        bytestring = bytestring.encode('utf-8', 'replace')
+    try:
+        from calibre_extensions.uchardet import detect as implementation
+    except ImportError:
+        # People running from source without updated binaries
+        from cchardet import detect as cdi
+
+        def implementation(x):
+            return cdi(x).get('encoding') or ''
+    enc = implementation(bytestring).lower()
+    return {'encoding': enc, 'confidence': 1 if enc else 0}
 
 
 def force_encoding(raw, verbose, assume_utf8=False):
@@ -152,6 +156,11 @@ def detect_xml_encoding(raw, verbose=False, assume_utf8=False):
             encoding = encoding.decode('ascii', 'replace')
             break
     if encoding is None:
+        if assume_utf8:
+            try:
+                return raw.decode('utf-8'), 'utf-8'
+            except UnicodeDecodeError:
+                pass
         encoding = force_encoding(raw, verbose, assume_utf8=assume_utf8)
     if encoding.lower().strip() == 'macintosh':
         encoding = 'mac-roman'

@@ -38,8 +38,8 @@ class PluginModel(QAbstractItemModel, AdaptSQP):  # {{{
         QAbstractItemModel.__init__(self)
         SearchQueryParser.__init__(self, ['all'])
         self.show_only_user_plugins = show_only_user_plugins
-        self.icon = QIcon(I('plugins.png'))
-        p = QIcon(self.icon).pixmap(64, 64, QIcon.Mode.Disabled, QIcon.State.On)
+        self.icon = QIcon.ic('plugins.png')
+        p = self.icon.pixmap(64, 64, QIcon.Mode.Disabled, QIcon.State.On)
         self.disabled_icon = QIcon(p)
         self._p = p
         self.populate()
@@ -189,9 +189,8 @@ class PluginModel(QAbstractItemModel, AdaptSQP):  # {{{
 
     def flags(self, index):
         if not index.isValid():
-            return 0
-        flags = Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled
-        return flags
+            return Qt.ItemFlag.NoItemFlags
+        return Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled
 
     def data(self, index, role):
         if not index.isValid():
@@ -332,14 +331,13 @@ class ConfigWidget(ConfigWidgetBase, Ui_Form):
             self._plugin_model.endResetModel()
             self.changed_signal.emit()
             self.check_for_add_to_toolbars(plugin, previously_installed=plugin.name in installed_plugins)
-            info_dialog(self, _('Success'),
-                    _('Plugin <b>{0}</b> successfully installed under <b>'
-                        '{1}</b>. You may have to restart calibre '
-                        'for the plugin to take effect.').format(plugin.name, plugin.type),
-                    show=True, show_copy_button=False)
+            from calibre.gui2.dialogs.plugin_updater import notify_on_successful_install
+            do_restart = notify_on_successful_install(self, plugin)
             idx = self._plugin_model.plugin_to_index_by_properties(plugin)
             if idx.isValid():
                 self.highlight_index(idx)
+            if do_restart:
+                self.restart_now.emit()
         else:
             error_dialog(self, _('No valid plugin path'),
                          _('%s is not a valid plugin path')%path).exec()
@@ -474,6 +472,6 @@ class ConfigWidget(ConfigWidgetBase, Ui_Form):
 
 
 if __name__ == '__main__':
-    from qt.core import QApplication
-    app = QApplication([])
+    from calibre.gui2 import Application
+    app = Application([])
     test_widget('Advanced', 'Plugins')

@@ -6,11 +6,13 @@ __copyright__ = '2012, Kovid Goyal <kovid at kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
 from operator import attrgetter
-
-from qt.core import (QTabWidget, QTreeWidget, QTreeWidgetItem, Qt, QDialog,
-        QDialogButtonBox, QVBoxLayout, QSize, pyqtSignal, QIcon, QLabel)
+from qt.core import (
+    QDialog, QDialogButtonBox, QIcon, QLabel, QSize, Qt, QTabWidget, QTreeWidget,
+    QTreeWidgetItem, QVBoxLayout, pyqtSignal,
+)
 
 from calibre.gui2 import file_icon_provider
+from calibre.utils.icu import lower as icu_lower
 
 
 def browser_item(f, parent):
@@ -93,7 +95,7 @@ class Browser(QDialog):
         self.setMinimumSize(QSize(500, 500))
         self.folders.selected.connect(self.accept)
         self.setWindowTitle(_('Choose folder on device'))
-        self.setWindowIcon(QIcon(I('devices/tablet.png')))
+        self.setWindowIcon(QIcon.ic('devices/tablet.png'))
 
     @property
     def current_item(self):
@@ -139,7 +141,7 @@ class IgnoredFolders(QDialog):
         self.snb.clicked.connect(self.select_none)
         l.addWidget(self.bb)
         self.setWindowTitle(_('Choose folders to scan'))
-        self.setWindowIcon(QIcon(I('devices/tablet.png')))
+        self.setWindowIcon(QIcon.ic('devices/tablet.png'))
 
         self.resize(600, 500)
 

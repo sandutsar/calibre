@@ -4,18 +4,20 @@
 __license__ = 'GPL v3'
 __copyright__ = '2016, Kovid Goyal <kovid at kovidgoyal.net>'
 
+from css_parser import parseStyle
 from functools import partial
 
-from css_parser import parseStyle
-
 from calibre.constants import iswindows
-from calibre.ebooks.oeb.base import OEB_STYLES, OEB_DOCS
-from calibre.ebooks.oeb.polish.cascade import iterrules, resolve_styles, DEFAULTS
+from calibre.ebooks.oeb.base import OEB_DOCS, OEB_STYLES
+from calibre.ebooks.oeb.polish.cascade import DEFAULTS, iterrules, resolve_styles
+from calibre.ebooks.oeb.polish.container import ContainerBase, href_to_name
 from calibre.ebooks.oeb.polish.css import remove_property_value
 from calibre.ebooks.oeb.polish.embed import find_matching_font
-from calibre.ebooks.oeb.polish.container import ContainerBase, href_to_name
-from calibre.ebooks.oeb.polish.stats import StatsCollector, font_keys, normalize_font_properties, prepare_font_rule
+from calibre.ebooks.oeb.polish.stats import (
+    StatsCollector, font_keys, normalize_font_properties, prepare_font_rule,
+)
 from calibre.ebooks.oeb.polish.tests.base import BaseTest
+from calibre.utils.icu import lower as icu_lower
 from calibre.utils.logging import Log, Stream
 from polyglot.builtins import iteritems
 
@@ -160,7 +162,6 @@ class CascadeTest(BaseTest):
                         v = 'url(%s)' % v
                     styles.append(f'{k} : {v};')
                 styles.append('}\n')
-            html = f'<html><head><link href="styles.css"></head><body>{html}</body></html>'
             files['styles.css'] = embeds + '\n'.join(styles)
             c = VirtualContainer(files)
             return StatsCollector(c, do_embed=True)
@@ -207,12 +208,15 @@ class CascadeTest(BaseTest):
 
         s = get_stats('<p style="font-family: X; text-transform:uppercase">abc</p><b style="font-family: X; font-variant: small-caps">d\nef</b>')
         self.assertEqual(s.font_stats, {'XB.otf':set('defDEF'), 'X.otf':set('ABC')})
+        s = get_stats('<style>.fl::first-line { font-family: X }</style><p class="fl">abc<b>def</b></p>')
+        # Technically def should not be needed in X but that is hard to achieve
+        self.assertEqual(s.font_stats, {'XB.otf':set('def'), 'X.otf':set('abcdef')})
 
     def test_remove_property_value(self):
         style = parseStyle('background-image: url(b.png); background: black url(a.png) fixed')
         for prop in style.getProperties(all=True):
             remove_property_value(prop, lambda val:'png' in val.cssText)
-        self.assertEqual('background: black fixed', style.cssText)
+        self.assertEqual('background: black fixed', style.cssText.rstrip(';'))
 
     def test_fallback_font_matching(self):
         def cf(id, weight='normal', style='normal', stretch='normal'):

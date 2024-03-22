@@ -35,7 +35,7 @@ from calibre.gui2.tweak_book.editor.themes import (
 from calibre.gui2.tweak_book.widgets import PARAGRAPH_SEPARATOR, PlainTextEdit
 from calibre.spell.break_iterator import index_of
 from calibre.utils.icu import (
-    capitalize, lower, safe_chr, string_length, swapcase, upper
+    capitalize, lower, safe_chr, string_length, swapcase, upper, utf16_length
 )
 from calibre.utils.img import image_to_data
 from calibre.utils.titlecase import titlecase
@@ -66,7 +66,7 @@ _dff = None
 def default_font_family():
     global _dff
     if _dff is None:
-        families = set(map(str, QFontDatabase().families()))
+        families = set(map(str, QFontDatabase.families()))
         for x in ('Ubuntu Mono', 'Consolas', 'Liberation Mono'):
             if x in families:
                 _dff = x
@@ -180,7 +180,7 @@ class TextEdit(PlainTextEdit):
                     name = path
                 else:
                     name = get_name(os.path.basename(path))
-                    with lopen(path, 'rb') as f:
+                    with open(path, 'rb') as f:
                         name = add_file(name, f.read(), mt)
                 href = get_href(name)
                 if mt.startswith('image/'):
@@ -224,10 +224,10 @@ class TextEdit(PlainTextEdit):
         self.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth if prefs['editor_line_wrap'] else QPlainTextEdit.LineWrapMode.NoWrap)
         theme = get_theme(prefs['editor_theme'])
         self.apply_theme(theme)
-        w = self.fontMetrics()
-        self.space_width = w.width(' ')
+        fm = self.fontMetrics()
+        self.space_width = fm.horizontalAdvance(' ')
         self.tw = self.smarts.override_tab_stop_width if self.smarts.override_tab_stop_width is not None else prefs['editor_tab_stop_width']
-        self.setTabStopWidth(self.tw * self.space_width)
+        self.setTabStopDistance(self.tw * self.space_width)
         if dictionaries_changed:
             self.highlighter.rehighlight()
 
@@ -240,6 +240,9 @@ class TextEdit(PlainTextEdit):
         pal.setColor(QPalette.ColorRole.Highlight, theme_color(theme, 'Visual', 'bg'))
         pal.setColor(QPalette.ColorRole.HighlightedText, theme_color(theme, 'Visual', 'fg'))
         self.setPalette(pal)
+        vpal = self.viewport().palette()
+        vpal.setColor(QPalette.ColorRole.Base, pal.color(QPalette.ColorRole.Base))
+        self.viewport().setPalette(vpal)
         self.tooltip_palette = pal = QPalette()
         pal.setColor(QPalette.ColorRole.ToolTipBase, theme_color(theme, 'Tooltip', 'bg'))
         pal.setColor(QPalette.ColorRole.ToolTipText, theme_color(theme, 'Tooltip', 'fg'))
@@ -258,9 +261,9 @@ class TextEdit(PlainTextEdit):
         self.tooltip_font.setPointSizeF(font.pointSizeF() - 1.)
         self.setFont(font)
         self.highlighter.apply_theme(theme)
-        w = self.fontMetrics()
-        self.number_width = max(map(lambda x:w.width(str(x)), range(10)))
-        self.size_hint = QSize(self.expected_geometry[0] * w.averageCharWidth(), self.expected_geometry[1] * w.height())
+        fm = self.fontMetrics()
+        self.number_width = max(map(lambda x:fm.horizontalAdvance(str(x)), range(10)))
+        self.size_hint = QSize(self.expected_geometry[0] * fm.averageCharWidth(), self.expected_geometry[1] * fm.height())
         self.highlight_color = theme_color(theme, 'HighlightRegion', 'bg')
         self.highlight_cursor_line()
         self.completion_popup.clear_caches(), self.completion_popup.update()
@@ -276,7 +279,7 @@ class TextEdit(PlainTextEdit):
             self.smarts = sclass(self)
             if self.smarts.override_tab_stop_width is not None:
                 self.tw = self.smarts.override_tab_stop_width
-                self.setTabStopWidth(self.tw * self.space_width)
+                self.setTabStopDistance(self.tw * self.space_width)
         if isinstance(text, bytes):
             text = text.decode('utf-8', 'replace')
         self.setPlainText(unicodedata.normalize('NFC', str(text)))
@@ -331,7 +334,7 @@ class TextEdit(PlainTextEdit):
     def update_extra_selections(self, instant=True):
         sel = []
         if self.current_cursor_line is not None:
-            sel.append(self.current_cursor_line)
+            sel.extend(self.current_cursor_line)
         if self.current_search_mark is not None:
             sel.append(self.current_search_mark)
         if instant and not self.highlighter.has_requests and self.smarts is not None:
@@ -470,6 +473,7 @@ class TextEdit(PlainTextEdit):
         start, end = m.span()
         if start == end:
             return False
+        end = start + utf16_length(raw[start:end])
         if wrap and not complete:
             if reverse:
                 textpos = c.anchor()
@@ -515,6 +519,7 @@ class TextEdit(PlainTextEdit):
             start, end = m.span()
             if start == end:
                 return False
+            end = start + utf16_length(raw[start:end])
         if reverse:
             start, end = end, start
         c.clearSelection()
@@ -566,7 +571,7 @@ class TextEdit(PlainTextEdit):
             c.movePosition(QTextCursor.MoveOperation.Start)
         block = c.block()
         while block.isValid():
-            for r in block.layout().additionalFormats():
+            for r in block.layout().formats():
                 if r.format.property(SPELL_PROPERTY):
                     if not from_cursor or block.position() + r.start + r.length > c.position():
                         c.setPosition(block.position() + r.start)
@@ -620,12 +625,36 @@ class TextEdit(PlainTextEdit):
 
     # Line numbers and cursor line {{{
     def highlight_cursor_line(self):
+        self._highlight_cursor_line()
+
+    def _highlight_cursor_line(self, highlight_now=True):
+        if self.highlighter.is_working:
+            QTimer.singleShot(10, self.highlight_cursor_line)
+            if not highlight_now:
+                return
         sel = QTextEdit.ExtraSelection()
         sel.format.setBackground(self.palette().alternateBase())
         sel.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
         sel.cursor = self.textCursor()
         sel.cursor.clearSelection()
-        self.current_cursor_line = sel
+        self.current_cursor_line = [sel]
+
+        # apply any formats that have a background over the cursor line format
+        # to ensure they are visible
+        c = self.textCursor()
+        block = c.block()
+        c.clearSelection()
+        c.select(QTextCursor.SelectionType.LineUnderCursor)
+        start = min(c.anchor(), c.position())
+        length = max(c.anchor(), c.position()) - start
+        for f in self.highlighter.formats_for_line(block, start, length):
+            sel = QTextEdit.ExtraSelection()
+            c = self.textCursor()
+            c.setPosition(f.start + block.position())
+            c.setPosition(c.position() + f.length, QTextCursor.MoveMode.KeepAnchor)
+            sel.cursor, sel.format = c, f.format
+            self.current_cursor_line.append(sel)
+
         self.update_extra_selections(instant=False)
         # Update the cursor line's line number in the line number area
         try:
@@ -730,7 +759,7 @@ class TextEdit(PlainTextEdit):
         c.movePosition(QTextCursor.MoveOperation.Start)
         block = c.block()
         while block.isValid():
-            for r in block.layout().additionalFormats():
+            for r in block.layout().formats():
                 if r.format.property(SPELL_PROPERTY) and self.text_for_range(block, r) == word:
                     self.highlighter.reformat_block(block)
                     break
@@ -741,7 +770,7 @@ class TextEdit(PlainTextEdit):
         if cursor.isNull():
             return
         pos = cursor.positionInBlock()
-        for r in cursor.block().layout().additionalFormats():
+        for r in cursor.block().layout().formats():
             if r.start <= pos <= r.start + r.length and r.format.property(SYNTAX_PROPERTY):
                 return r
 
@@ -865,25 +894,13 @@ class TextEdit(PlainTextEdit):
             'bold': ('<b>', '</b>'),
             'italic': ('<i>', '</i>'),
             'underline': ('<u>', '</u>'),
-            'strikethrough': ('<strike>', '</strike>'),
+            'strikethrough': ('<span style="text-decoration: line-through">', '</span>'),
             'superscript': ('<sup>', '</sup>'),
             'subscript': ('<sub>', '</sub>'),
             'color': ('<span style="color: %s">' % color, '</span>'),
             'background-color': ('<span style="background-color: %s">' % color, '</span>'),
         }[formatting]
-        left, right = self.get_range_inside_tag()
-        c = self.textCursor()
-        c.setPosition(left)
-        c.setPosition(right, QTextCursor.MoveMode.KeepAnchor)
-        prev_text = str(c.selectedText()).rstrip('\0')
-        c.insertText(prefix + prev_text + suffix)
-        if prev_text:
-            right = c.position()
-            c.setPosition(left)
-            c.setPosition(right, QTextCursor.MoveMode.KeepAnchor)
-        else:
-            c.setPosition(c.position() - len(suffix))
-        self.setTextCursor(c)
+        self.smarts.surround_with_custom_tag(self, prefix, suffix)
 
     def insert_image(self, href, fullpage=False, preserve_aspect_ratio=False, width=-1, height=-1):
         if width <= 0:

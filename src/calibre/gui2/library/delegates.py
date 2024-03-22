@@ -5,26 +5,37 @@ __license__   = 'GPL v3'
 __copyright__ = '2010, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
+import os
 import sys
+from datetime import datetime
+from qt.core import (
+    QAbstractTextDocumentLayout, QApplication, QComboBox, QDate, QDateTime,
+    QDateTimeEdit, QDialog, QDoubleSpinBox, QEvent, QFont, QFontInfo, QIcon,
+    QKeySequence, QLineEdit, QLocale, QMenu, QPalette, QSize, QSpinBox, QStyle,
+    QStyledItemDelegate, QStyleOptionComboBox, QStyleOptionSpinBox,
+    QStyleOptionViewItem, Qt, QTextDocument, QUrl,
+)
 
-from qt.core import (Qt, QApplication, QStyle, QIcon,  QDoubleSpinBox, QStyleOptionViewItem,
-        QSpinBox, QStyledItemDelegate, QComboBox, QTextDocument, QMenu, QKeySequence,
-        QAbstractTextDocumentLayout, QFont, QFontInfo, QDate, QDateTimeEdit, QDateTime, QEvent,
-        QStyleOptionComboBox, QStyleOptionSpinBox, QLocale, QSize, QLineEdit, QDialog, QPalette)
-
-from calibre.ebooks.metadata import rating_to_stars
-from calibre.gui2 import UNDEFINED_QDATETIME, rating_font
 from calibre.constants import iswindows
-from calibre.gui2.widgets import EnLineEdit
-from calibre.gui2.widgets2 import populate_standard_spinbox_context_menu, RatingEditor, DateTimeEdit as DateTimeEditBase
+from calibre.ebooks.metadata import rating_to_stars, title_sort
+from calibre.gui2 import UNDEFINED_QDATETIME, gprefs, rating_font
 from calibre.gui2.complete2 import EditWithComplete
-from calibre.utils.date import now, format_date, qt_to_dt, is_date_undefined, internal_iso_format_string
-
-from calibre.utils.config import tweaks
-from calibre.utils.icu import sort_key
 from calibre.gui2.dialogs.comments_dialog import CommentsDialog, PlainTextDialog
 from calibre.gui2.dialogs.tag_editor import TagEditor
 from calibre.gui2.languages import LanguagesEdit
+from calibre.gui2.markdown_editor import MarkdownEditDialog
+from calibre.gui2.widgets import EnLineEdit
+from calibre.gui2.widgets2 import (
+    DateTimeEdit as DateTimeEditBase, RatingEditor,
+    populate_standard_spinbox_context_menu,
+)
+from calibre.library.comments import markdown
+from calibre.utils.config import tweaks
+from calibre.utils.date import (
+    format_date, internal_iso_format_string, is_date_undefined, now, qt_from_dt,
+    qt_to_dt,
+)
+from calibre.utils.icu import sort_key
 
 
 class UpdateEditorGeometry:
@@ -71,11 +82,8 @@ class UpdateEditorGeometry:
                 is_pin_view = True
                 break
             p = p.parent()
-        if is_pin_view:
-            max_width = pin_view.horizontalScrollBar().geometry().width()
-        else:
-            view = self.table_widget
-            max_width = view.horizontalScrollBar().geometry().width() - view.verticalHeader().width()
+
+        max_width = (pin_view if is_pin_view else self.table_widget).viewport().rect().width()
         # What we have to display might not fit. If so, adjust down
         new_width = new_width if new_width < max_width else max_width
 
@@ -108,6 +116,11 @@ class UpdateEditorGeometry:
         initial_geometry.adjust(delta_x, 0, delta_width, 0)
         editor.setGeometry(initial_geometry)
 
+class EditableTextDelegate:
+
+    def setEditorData(self, editor, index):
+        n = editor.metaObject().userProperty().name()
+        editor.setProperty(n, get_val_for_textlike_columns(index))
 
 class DateTimeEdit(DateTimeEditBase):  # {{{
 
@@ -157,7 +170,7 @@ ClearingDoubleSpinBox = make_clearing_spinbox(QDoubleSpinBox)
 
 
 def check_key_modifier(which_modifier):
-    v = int(QApplication.keyboardModifiers() & (Qt.KeyboardModifier.ControlModifier + Qt.KeyboardModifier.ShiftModifier))
+    v = QApplication.keyboardModifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier)
     return v == which_modifier
 
 
@@ -240,12 +253,14 @@ class DateDelegate(QStyledItemDelegate, UpdateEditorGeometry):  # {{{
     def setEditorData(self, editor, index):
         if check_key_modifier(Qt.KeyboardModifier.ControlModifier):
             val = UNDEFINED_QDATETIME
-        elif check_key_modifier(Qt.KeyboardModifier.ShiftModifier + Qt.KeyboardModifier.ControlModifier):
+        elif check_key_modifier(Qt.KeyboardModifier.ShiftModifier | Qt.KeyboardModifier.ControlModifier):
             val = now()
         else:
             val = index.data(Qt.ItemDataRole.EditRole)
             if is_date_undefined(val):
                 val = now()
+        if isinstance(val, datetime):
+            val = qt_from_dt(val)
         editor.setDateTime(val)
 
 # }}}
@@ -273,7 +288,7 @@ class PubDateDelegate(QStyledItemDelegate, UpdateEditorGeometry):  # {{{
         val = index.data(Qt.ItemDataRole.EditRole)
         if check_key_modifier(Qt.KeyboardModifier.ControlModifier):
             val = UNDEFINED_QDATETIME
-        elif check_key_modifier(Qt.KeyboardModifier.ShiftModifier + Qt.KeyboardModifier.ControlModifier):
+        elif check_key_modifier(Qt.KeyboardModifier.ShiftModifier | Qt.KeyboardModifier.ControlModifier):
             val = now()
         elif is_date_undefined(val):
             val = QDate.currentDate()
@@ -284,7 +299,9 @@ class PubDateDelegate(QStyledItemDelegate, UpdateEditorGeometry):  # {{{
 # }}}
 
 
-class TextDelegate(QStyledItemDelegate, UpdateEditorGeometry):  # {{{
+class TextDelegate(QStyledItemDelegate, UpdateEditorGeometry, EditableTextDelegate):  # {{{
+
+    use_title_sort = False
 
     def __init__(self, parent):
         '''
@@ -301,7 +318,10 @@ class TextDelegate(QStyledItemDelegate, UpdateEditorGeometry):  # {{{
 
     def createEditor(self, parent, option, index):
         if self.auto_complete_function:
-            editor = EditWithComplete(parent)
+            if self.use_title_sort:
+                editor = EditWithComplete(parent, sort_func=title_sort)
+            else:
+                editor = EditWithComplete(parent)
             editor.set_separator(None)
             editor.set_clear_button_enabled(False)
             complete_items = [i[1] for i in self.auto_complete_function()]
@@ -309,10 +329,6 @@ class TextDelegate(QStyledItemDelegate, UpdateEditorGeometry):  # {{{
         else:
             editor = EnLineEdit(parent)
         return editor
-
-    def setEditorData(self, editor, index):
-        editor.setText(get_val_for_textlike_columns(index))
-        editor.selectAll()
 
     def setModelData(self, editor, model, index):
         if isinstance(editor, EditWithComplete):
@@ -326,13 +342,15 @@ class TextDelegate(QStyledItemDelegate, UpdateEditorGeometry):  # {{{
 
 class SeriesDelegate(TextDelegate):  # {{{
 
+    use_title_sort = True
+
     def initStyleOption(self, option, index):
         TextDelegate.initStyleOption(self, option, index)
         option.textElideMode = Qt.TextElideMode.ElideMiddle
 # }}}
 
 
-class CompleteDelegate(QStyledItemDelegate, UpdateEditorGeometry):  # {{{
+class CompleteDelegate(QStyledItemDelegate, UpdateEditorGeometry, EditableTextDelegate):  # {{{
 
     def __init__(self, parent, sep, items_func_name, space_before_sep=False):
         QStyledItemDelegate.__init__(self, parent)
@@ -372,10 +390,6 @@ class CompleteDelegate(QStyledItemDelegate, UpdateEditorGeometry):  # {{{
         else:
             editor = EnLineEdit(parent)
         return editor
-
-    def setEditorData(self, editor, index):
-        editor.setText(get_val_for_textlike_columns(index))
-        editor.selectAll()
 
     def setModelData(self, editor, model, index):
         if isinstance(editor, EditWithComplete):
@@ -439,12 +453,14 @@ class CcDateDelegate(QStyledItemDelegate, UpdateEditorGeometry):  # {{{
     def setEditorData(self, editor, index):
         if check_key_modifier(Qt.KeyboardModifier.ControlModifier):
             val = UNDEFINED_QDATETIME
-        elif check_key_modifier(Qt.KeyboardModifier.ShiftModifier + Qt.KeyboardModifier.ControlModifier):
+        elif check_key_modifier(Qt.KeyboardModifier.ShiftModifier | Qt.KeyboardModifier.ControlModifier):
             val = now()
         else:
             val = index.data(Qt.ItemDataRole.EditRole)
             if is_date_undefined(val):
                 val = now()
+        if isinstance(val, datetime):
+            val = qt_from_dt(val)
         editor.setDateTime(val)
 
     def setModelData(self, editor, model, index):
@@ -456,11 +472,12 @@ class CcDateDelegate(QStyledItemDelegate, UpdateEditorGeometry):  # {{{
 # }}}
 
 
-class CcTextDelegate(QStyledItemDelegate, UpdateEditorGeometry):  # {{{
+class CcTextDelegate(QStyledItemDelegate, UpdateEditorGeometry, EditableTextDelegate):  # {{{
 
     '''
     Delegate for text data.
     '''
+    use_title_sort = False
 
     def __init__(self, parent):
         QStyledItemDelegate.__init__(self, parent)
@@ -471,7 +488,10 @@ class CcTextDelegate(QStyledItemDelegate, UpdateEditorGeometry):  # {{{
         col = m.column_map[index.column()]
         key = m.db.field_metadata.key_to_label(col)
         if m.db.field_metadata[col]['datatype'] != 'comments':
-            editor = EditWithComplete(parent)
+            if self.use_title_sort:
+                editor = EditWithComplete(parent, sort_func=title_sort)
+            else:
+                editor = EditWithComplete(parent)
             editor.set_separator(None)
             editor.set_clear_button_enabled(False)
             complete_items = sorted(list(m.db.all_custom(label=key)), key=sort_key)
@@ -481,12 +501,7 @@ class CcTextDelegate(QStyledItemDelegate, UpdateEditorGeometry):  # {{{
             text = index.data(Qt.ItemDataRole.DisplayRole)
             if text:
                 editor.setText(text)
-                editor.selectAll()
         return editor
-
-    def setEditorData(self, editor, index):
-        editor.setText(get_val_for_textlike_columns(index))
-        editor.selectAll()
 
     def setModelData(self, editor, model, index):
         val = editor.text() or ''
@@ -497,6 +512,8 @@ class CcTextDelegate(QStyledItemDelegate, UpdateEditorGeometry):  # {{{
 
 
 class CcSeriesDelegate(CcTextDelegate):  # {{{
+
+    use_title_sort = True
 
     def initStyleOption(self, option, index):
         CcTextDelegate.initStyleOption(self, option, index)
@@ -531,6 +548,59 @@ class CcLongTextDelegate(QStyledItemDelegate):  # {{{
 # }}}
 
 
+class CcMarkdownDelegate(QStyledItemDelegate):  # {{{
+
+    '''
+    Delegate for markdown data.
+    '''
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.document = QTextDocument()
+
+    def paint(self, painter, option, index):
+        self.initStyleOption(option, index)
+        style = QApplication.style() if option.widget is None else option.widget.style()
+        option.text = markdown(option.text)
+        self.document.setHtml(option.text)
+        style.drawPrimitive(QStyle.PrimitiveElement.PE_PanelItemViewItem, option, painter, widget=option.widget)
+        rect = style.subElementRect(QStyle.SubElement.SE_ItemViewItemDecoration, option, self.parent())
+        ic = option.icon
+        if rect.isValid() and not ic.isNull():
+            sz = ic.actualSize(option.decorationSize)
+            painter.drawPixmap(rect.topLeft(), ic.pixmap(sz))
+        ctx = QAbstractTextDocumentLayout.PaintContext()
+        ctx.palette = option.palette
+        if option.state & QStyle.StateFlag.State_Selected:
+            ctx.palette.setColor(QPalette.ColorRole.Text, ctx.palette.color(QPalette.ColorRole.HighlightedText))
+        textRect = style.subElementRect(QStyle.SubElement.SE_ItemViewItemText, option, self.parent())
+        painter.save()
+        painter.translate(textRect.topLeft())
+        painter.setClipRect(textRect.translated(-textRect.topLeft()))
+        self.document.documentLayout().draw(painter, ctx)
+        painter.restore()
+
+    def createEditor(self, parent, option, index):
+        m = index.model()
+        col = m.column_map[index.column()]
+        if check_key_modifier(Qt.KeyboardModifier.ControlModifier):
+            text = ''
+        else:
+            text = m.db.data[index.row()][m.custom_columns[col]['rec_index']]
+
+        path = m.db.abspath(index.row(), index_is_id=False)
+        base_url = QUrl.fromLocalFile(os.path.join(path, 'metadata.html')) if path else None
+        d = MarkdownEditDialog(parent, text, column_name=m.custom_columns[col]['name'],
+                               base_url=base_url)
+        if d.exec() == QDialog.DialogCode.Accepted:
+            m.setData(index, (d.text), Qt.ItemDataRole.EditRole)
+        return None
+
+    def setModelData(self, editor, model, index):
+        model.setData(index, (editor.textbox.html), Qt.ItemDataRole.EditRole)
+# }}}
+
+
 class CcNumberDelegate(QStyledItemDelegate, UpdateEditorGeometry):  # {{{
 
     '''
@@ -553,7 +623,7 @@ class CcNumberDelegate(QStyledItemDelegate, UpdateEditorGeometry):  # {{{
             editor = ClearingDoubleSpinBox(parent)
             editor.setSpecialValueText(_('Undefined'))
             editor.setRange(-1000000., 100000000.)
-            editor.setDecimals(2)
+            editor.setDecimals(int(m.custom_columns[col]['display'].get('decimals', 2)))
         return editor
 
     def setModelData(self, editor, model, index):
@@ -698,19 +768,20 @@ class CcBoolDelegate(QStyledItemDelegate, UpdateEditorGeometry):  # {{{
         '''
         Delegate for custom_column bool data.
         '''
+        self.nuke_option_data = False
         QStyledItemDelegate.__init__(self, parent)
         self.table_widget = parent
 
     def createEditor(self, parent, option, index):
         editor = DelegateCB(parent)
         items = [_('Yes'), _('No'), _('Undefined')]
-        icons = [I('ok.png'), I('list_remove.png'), I('blank.png')]
+        icons = ['ok.png', 'list_remove.png', 'blank.png']
         if not index.model().db.new_api.pref('bools_are_tristate'):
             items = items[:-1]
             icons = icons[:-1]
         self.longest_text = ''
         for icon, text in zip(icons, items):
-            editor.addItem(QIcon(icon), text)
+            editor.addItem(QIcon.ic(icon), text)
             if len(text) > len(self.longest_text):
                 self.longest_text = text
         return editor
@@ -722,7 +793,7 @@ class CcBoolDelegate(QStyledItemDelegate, UpdateEditorGeometry):  # {{{
 
     def setModelData(self, editor, model, index):
         val = {0:True, 1:False, 2:None}[editor.currentIndex()]
-        model.setData(index, (val), Qt.ItemDataRole.EditRole)
+        model.setData(index, val, Qt.ItemDataRole.EditRole)
 
     def setEditorData(self, editor, index):
         m = index.model()
@@ -734,6 +805,24 @@ class CcBoolDelegate(QStyledItemDelegate, UpdateEditorGeometry):  # {{{
                             else 1 if not val else 0
         editor.setCurrentIndex(val)
 
+    def initStyleOption(self, option, index):
+        ret = super().initStyleOption(option, index)
+        if self.nuke_option_data:
+            option.icon = QIcon()
+            option.text = ''
+            option.features &= ~QStyleOptionViewItem.ViewItemFeature.HasDisplay & ~QStyleOptionViewItem.ViewItemFeature.HasDecoration
+        return ret
+
+    def paint(self, painter, option, index):
+        text, icon = index.data(Qt.ItemDataRole.DisplayRole), index.data(Qt.ItemDataRole.DecorationRole)
+        if (not text and not icon) or text or not icon:
+            return super().paint(painter, option, index)
+        self.nuke_option_data = True
+        super().paint(painter, option, index)
+        self.nuke_option_data = False
+        style = option.styleObject.style() if option.styleObject else QApplication.instance().style()
+        style.drawItemPixmap(painter, option.rect, Qt.AlignmentFlag.AlignCenter, icon)
+
 # }}}
 
 
@@ -741,11 +830,17 @@ class CcTemplateDelegate(QStyledItemDelegate):  # {{{
 
     def __init__(self, parent):
         '''
-        Delegate for custom_column bool data.
+        Delegate for composite custom_columns.
         '''
         QStyledItemDelegate.__init__(self, parent)
+        self.disallow_edit = gprefs['edit_metadata_templates_only_F2_on_booklist']
 
     def createEditor(self, parent, option, index):
+        if self.disallow_edit:
+            editor = QLineEdit(parent)
+            editor.setText(_('Template editing disabled'))
+            return editor
+        self.disallow_edit = gprefs['edit_metadata_templates_only_F2_on_booklist']
         from calibre.gui2.dialogs.template_dialog import TemplateDialog
         m = index.model()
         mi = m.db.get_metadata(index.row(), index_is_id=False)
@@ -756,10 +851,22 @@ class CcTemplateDelegate(QStyledItemDelegate):  # {{{
         editor = TemplateDialog(parent, text, mi)
         editor.setWindowTitle(_("Edit template"))
         editor.textbox.setTabChangesFocus(False)
-        editor.textbox.setTabStopWidth(20)
+        editor.textbox.setTabStopDistance(20)
         d = editor.exec()
         if d:
             m.setData(index, (editor.rule[1]), Qt.ItemDataRole.EditRole)
         return None
 
+    def setEditorData(self, editor, index):
+        editor.setText('editing templates disabled')
+        editor.setReadOnly(True)
+
+    def setModelData(self, editor, model, index):
+        pass
+
+    def allow_one_edit(self):
+        self.disallow_edit = False
+
+    def refresh(self):
+        self.disallow_edit = gprefs['edit_metadata_templates_only_F2_on_booklist']
 # }}}

@@ -5,15 +5,16 @@ __license__   = 'GPL v3'
 __copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
+import regex
 import sys
 from functools import partial
-
 from lxml.etree import tostring
-import regex
 
 from calibre.ebooks.oeb.base import XHTML, css_text
-from calibre.ebooks.oeb.polish.cascade import iterrules, resolve_styles, iterdeclaration
-from calibre.utils.icu import ord_string, safe_chr
+from calibre.ebooks.oeb.polish.cascade import iterdeclaration, iterrules, resolve_styles
+from calibre.utils.icu import (
+    lower as icu_lower, ord_string, safe_chr, upper as icu_upper,
+)
 from polyglot.builtins import iteritems, itervalues
 from tinycss.fonts3 import parse_font_family
 
@@ -184,7 +185,7 @@ class StatsCollector:
     def __init__(self, container, do_embed=False):
         if self.first_letter_pat is None:
             StatsCollector.first_letter_pat = self.first_letter_pat = regex.compile(
-                r'^[\p{Ps}\p{Ps}\p{Pe}\p{Pi}\p{Pf}\p{Po}]+', regex.VERSION1 | regex.UNICODE)
+                r'^[\p{P}]*[\p{L}\p{N}]', regex.VERSION1 | regex.UNICODE)
             StatsCollector.capitalize_pat = self.capitalize_pat = regex.compile(
                 r'[\p{L}\p{N}]', regex.VERSION1 | regex.UNICODE)
 
@@ -249,8 +250,7 @@ class StatsCollector:
         update_usage_for_embed(font, chars)
         for rule in get_matching_rules(font_face_rules, font):
             self.font_stats[rule['src']] |= chars
-        q = resolve_pseudo_property(elem, 'first-letter', 'font-family', abort_on_missing=True)
-        if q is not None:
+        if resolve_pseudo_property(elem, 'first-letter', 'font-family', check_if_pseudo_applies=True):
             font = get_font_dict(elem, resolve_pseudo_property, pseudo='first-letter')
             text = get_element_text(elem, resolve_property, resolve_pseudo_property, self.capitalize_pat, for_pseudo='first-letter')
             m = self.first_letter_pat.search(text.lstrip())
@@ -259,9 +259,8 @@ class StatsCollector:
                 update_usage_for_embed(font, chars)
                 for rule in get_matching_rules(font_face_rules, font):
                     self.font_stats[rule['src']] |= chars
-        q = resolve_pseudo_property(elem, 'first-line', 'font-family', abort_on_missing=True)
-        if q is not None:
-            font = get_font_dict(elem, resolve_pseudo_property, pseudo='first-letter')
+        if resolve_pseudo_property(elem, 'first-line', 'font-family', check_if_pseudo_applies=True, check_ancestors=True):
+            font = get_font_dict(elem, partial(resolve_pseudo_property, check_ancestors=True), pseudo='first-line')
             text = get_element_text(elem, resolve_property, resolve_pseudo_property, self.capitalize_pat, for_pseudo='first-line')
             chars = frozenset(ord_string(text)) - exclude_chars
             update_usage_for_embed(font, chars)

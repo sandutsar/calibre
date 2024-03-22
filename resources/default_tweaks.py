@@ -32,7 +32,7 @@
 # Note that the use_series_auto_increment_tweak_when_importing tweak is used
 # only when a value is not provided during import. If the importing regular
 # expression produces a value for series_index, or if you are reading metadata
-# from books and the import plugin produces a value, than that value will
+# from books and the import plugin produces a value, then that value will
 # be used irrespective of the setting of the tweak.
 series_index_auto_increment = 'next'
 use_series_auto_increment_tweak_when_importing = False
@@ -52,7 +52,7 @@ authors_completer_append_separator = False
 #  nocomma : "fn ln" -> "ln fn" (without the comma)
 # When this tweak is changed, the author_sort values stored with each author
 # must be recomputed by right-clicking on an author in the left-hand tags
-# panel, selecting 'manage authors', and pressing
+# panel, selecting 'Manage authors', and pressing
 # 'Recalculate all author sort values'.
 #
 # The author_name_suffixes are words that are ignored when they occur at the
@@ -63,7 +63,7 @@ authors_completer_append_separator = False
 #
 # The author_name_copywords are a set of words which, if they occur in an
 # author name, cause the automatically generated author sort string to be
-# identical to the author name. This means that the sort for a string like
+# identical to the author's name. This means that the sort for a string like
 # "Acme Inc." will be "Acme Inc." instead of "Inc., Acme".
 #
 # If author_use_surname_prefixes is enabled, any of the words in
@@ -75,9 +75,11 @@ author_name_suffixes = ('Jr', 'Sr', 'Inc', 'Ph.D', 'Phd',
                         'MD', 'M.D', 'I', 'II', 'III', 'IV',
                         'Junior', 'Senior')
 author_name_prefixes = ('Mr', 'Mrs', 'Ms', 'Dr', 'Prof')
-author_name_copywords = ('Agency', 'Corporation', 'Company', 'Co.', 'Council',
-                         'Committee', 'Inc.', 'Institute', 'National',
-                         'Society', 'Club', 'Team')
+author_name_copywords = (
+    'Agency', 'Corporation', 'Company', 'Co.', 'Council',
+    'Committee', 'Inc.', 'Institute', 'National', 'Society', 'Club', 'Team',
+    'Software', 'Games', 'Entertainment', 'Media', 'Studios',
+)
 author_use_surname_prefixes = False
 author_surname_prefixes = ('da', 'de', 'di', 'la', 'le', 'van', 'von')
 
@@ -125,31 +127,6 @@ categories_use_field_for_author_name = 'author'
 categories_collapsed_name_template = r'{first.sort:shorten(4,,0)} - {last.sort:shorten(4,,0)}'
 categories_collapsed_rating_template = r'{first.avg_rating:4.2f:ifempty(0)} - {last.avg_rating:4.2f:ifempty(0)}'
 categories_collapsed_popularity_template = r'{first.count:d} - {last.count:d}'
-
-#: Control order of categories in the Tag browser
-# Change the following dict to change the order that categories are displayed in
-# the Tag browser. Items are named using their lookup name, and will be sorted
-# using the number supplied. The lookup name '*' stands for all names that
-# otherwise do not appear. Two names with the same value will be sorted
-# using the default order, the one specified by tag_browser_category_default_sort.
-# Example:
-#   tag_browser_category_order = {'series':1, 'tags':2, '*':3}
-#
-# results in the order series, tags, then everything else in default order.
-# The tweak tag_browser_category_default_sort specifies the sort order before
-# applying the category order from the dict. The allowed values are:
-#   tag_browser_category_default_sort = 'default' # The calibre default order
-#   tag_browser_category_default_sort = 'display_name' # Sort by the display name of the category
-#   tag_browser_category_default_sort = 'lookup_name' # Sort by the lookup name of the category
-#
-# In addition and if the category default sort is not 'default' you can specify
-# whether the sort is ascending or descending. This is ignored if the sort is 'default'.
-#   tag_browser_category_default_sort_direction = 'ascending'
-#   tag_browser_category_default_sort_direction = 'descending'
-tag_browser_category_order = {'*':1}
-tag_browser_category_default_sort = 'default'
-tag_browser_category_default_sort_direction = 'ascending'
-
 
 #: Specify columns to sort the booklist by on startup
 # Provide a set of columns to be sorted on when calibre starts.
@@ -247,7 +224,7 @@ per_language_title_sort_articles = {
                   r'Una\s+', r'Unos\s+', r'Unas\s+'),
         # French
         'fra'  : (r'Le\s+', r'La\s+', r"L'", u'L´', u'L’', r'Les\s+', r'Un\s+', r'Une\s+',
-                  r'Des\s+', r'De\s+La\s+', r'De\s+', r"D'", u'D´', u'L’'),
+                  r'Des\s+', r'De\s+La\s+', r'De\s+', r"D'", r'D´', r'D’'),
         # Polish
         'pol': (),
         # Italian
@@ -402,9 +379,10 @@ cover_trim_fuzz_value = 10
 
 #: Control behavior of the book list
 # You can control the behavior of double clicks and pressing Enter on the books
-# list. Choices: open_viewer, do_nothing, show_book_details, edit_cell,
-# edit_metadata. Selecting anything other than open_viewer or show_book_details
-# has the side effect of disabling editing a field using a single click.
+# list. Choices: open_viewer, do_nothing, show_book_details,
+# show_locked_book_details, edit_cell, edit_metadata. Selecting anything other
+# than open_viewer, show_book_details, or show_locked_book_details has the side
+# effect of disabling editing a field using a single click.
 # Default: open_viewer.
 # Example: doubleclick_on_library_view = 'do_nothing'
 # You can also control whether the book list scrolls per item or
@@ -547,12 +525,6 @@ content_server_thumbnail_compression_quality = 75
 #    cover_drop_exclude = {'tiff', 'webp'}
 cover_drop_exclude = ()
 
-#: Show the Saved searches box in the Search bar
-# In newer versions of calibre, only a single button that allows you to add a
-# new Saved search is shown in the Search bar. If you would like to have the
-# old Saved searches box with its two buttons back, set this tweak to True.
-show_saved_search_box = False
-
 #: Exclude fields when copy/pasting metadata
 # You can ask calibre to not paste some metadata fields when using the
 # Edit metadata->Copy metadata/Paste metadata actions. For example,
@@ -585,3 +557,26 @@ template_editor_tab_stop_width = 4
 #   value_for_undefined_numbers_when_sorting = 'minimum'
 #   value_for_undefined_numbers_when_sorting = 'maximum'
 value_for_undefined_numbers_when_sorting = 0
+
+#: Allow template database functions in composite columns
+# If True then the template database functions book_values() and book_count()
+# can be used in composite custom columns. Note: setting this tweak to True and
+# using these functions in composites can be very slow.
+# Default: False
+allow_template_database_functions_in_composites = False
+
+
+#: Change the programs that are run when opening files/URLs
+# By default, calibre passes URLs to the operating system to open using
+# whatever default programs are configured there. Here you can override
+# that by specifying the program to use, per URL type. For local files,
+# the type is "file" and for web links it is "http*". For example:
+# openers_by_scheme = { "http*": "firefox %u" } will make calibre run Firefox
+# for https://whatever URLs. %u is replaced by the URL to be opened. The scheme
+# takes a glob pattern allowing a single entry to match multiple URL types.
+openers_by_scheme = {}
+
+#: Set the first day of the week for calendar popups
+# It must be one of the values Default, Sunday, Monday, Tuesday, Wednesday,
+# Thursday, Friday, or Saturday, all in English, spelled exactly as shown.
+calendar_start_day_of_week = 'Default'

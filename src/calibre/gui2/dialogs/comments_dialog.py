@@ -6,8 +6,8 @@ __docformat__ = 'restructuredtext en'
 __license__   = 'GPL v3'
 
 from qt.core import (
-    QApplication, QDialog, QDialogButtonBox, QPlainTextEdit, QSize, Qt,
-    QVBoxLayout
+    QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QPlainTextEdit, QSize, Qt,
+    QVBoxLayout, pyqtSignal,
 )
 
 from calibre.gui2 import Application, gprefs
@@ -40,30 +40,33 @@ class CommentsDialog(QDialog):
 
         if column_name:
             self.setWindowTitle(_('Edit "{0}"').format(column_name))
-
-        geom = gprefs.get('comments_dialog_geom', None)
-        if geom is not None:
-            QApplication.instance().safe_restore_geometry(self, geom)
-        else:
-            self.resize(self.sizeHint())
+        self.restore_geometry(gprefs, 'comments_dialog_geom')
 
     def sizeHint(self):
         return QSize(650, 600)
 
-    def save_geometry(self):
-        gprefs.set('comments_dialog_geom', bytearray(self.saveGeometry()))
-
     def accept(self):
-        self.save_geometry()
+        self.save_geometry(gprefs, 'comments_dialog_geom')
         QDialog.accept(self)
 
     def reject(self):
-        self.save_geometry()
+        self.save_geometry(gprefs, 'comments_dialog_geom')
         QDialog.reject(self)
 
     def closeEvent(self, ev):
-        self.save_geometry()
+        self.save_geometry(gprefs, 'comments_dialog_geom')
         return QDialog.closeEvent(self, ev)
+
+
+class PlainTextEdit(QPlainTextEdit):
+    ctrl_enter_pushed = pyqtSignal()
+
+    def keyPressEvent(self, event):
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier and event.key() == Qt.Key.Key_Return:
+            event.accept()
+            self.ctrl_enter_pushed.emit()
+        else:
+            super().keyPressEvent(event)
 
 
 class PlainTextDialog(Dialog):
@@ -75,9 +78,16 @@ class PlainTextDialog(Dialog):
 
     def setup_ui(self):
         self.l = l = QVBoxLayout(self)
-        self._text = QPlainTextEdit(self)
+        self._text = PlainTextEdit(self)
+        self._text.ctrl_enter_pushed.connect(self.ctrl_enter_pushed)
         l.addWidget(self._text)
-        l.addWidget(self.bb)
+        hl = QHBoxLayout()
+        hl.addWidget(QLabel(_('Press Ctrl+Enter to accept or Esc to cancel')))
+        hl.addWidget(self.bb)
+        l.addLayout(hl)
+
+    def ctrl_enter_pushed(self):
+        self.accept()
 
     @property
     def text(self):

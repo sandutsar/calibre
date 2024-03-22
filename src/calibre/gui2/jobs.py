@@ -10,27 +10,29 @@ Job management.
 '''
 
 import time
+from qt.core import (
+    QAbstractItemDelegate, QAbstractTableModel, QAction, QApplication, QByteArray,
+    QCoreApplication, QDialog, QDialogButtonBox, QEvent, QHBoxLayout, QIcon,
+    QItemSelectionModel, QLabel, QModelIndex, QPlainTextEdit, QSize, QSizePolicy,
+    QSortFilterProxyModel, QStyle, QStyleOption, QStyleOptionProgressBar, QStylePainter,
+    Qt, QTextBrowser, QTimer, QToolTip, QVBoxLayout, QWidget, pyqtSignal,
+)
 
-from qt.core import (QAbstractTableModel, QModelIndex, Qt, QStylePainter,
-    QTimer, pyqtSignal, QIcon, QDialog, QAbstractItemDelegate, QApplication, QEvent,
-    QSize, QStyleOptionProgressBar, QStyle, QToolTip, QWidget, QStyleOption,
-    QHBoxLayout, QVBoxLayout, QSizePolicy, QLabel, QCoreApplication, QAction, QItemSelectionModel,
-    QByteArray, QSortFilterProxyModel, QTextBrowser, QPlainTextEdit, QDialogButtonBox)
-
-from calibre import strftime
-from calibre.constants import islinux, isbsd
-from calibre.utils.ipc.server import Server
-from calibre.utils.ipc.job import ParallelJob
-from calibre.gui2 import (Dispatcher, error_dialog, question_dialog,
-        config, gprefs)
+from calibre import __appname__, as_unicode, strftime
+from calibre.constants import isbsd, islinux
+from calibre.db.utils import human_readable_interval
+from calibre.gui2 import Dispatcher, config, error_dialog, gprefs, question_dialog
 from calibre.gui2.device import DeviceJob
 from calibre.gui2.dialogs.jobs_ui import Ui_JobsDialog
-from calibre import __appname__, as_unicode
 from calibre.gui2.progress_indicator import ProgressIndicator
-from calibre.gui2.threaded_jobs import ThreadedJobServer, ThreadedJob
+from calibre.gui2.threaded_jobs import ThreadedJob, ThreadedJobServer
 from calibre.gui2.widgets2 import Dialog
-from calibre.utils.search_query_parser import SearchQueryParser, ParseException
+from calibre.startup import connect_lambda
 from calibre.utils.icu import lower
+from calibre.utils.ipc.job import ParallelJob
+from calibre.utils.ipc.server import Server
+from calibre.utils.localization import ngettext
+from calibre.utils.search_query_parser import ParseException, SearchQueryParser
 from polyglot.queue import Empty, Queue
 
 
@@ -40,37 +42,20 @@ class AdaptSQP(SearchQueryParser):
         pass
 
 
-def human_readable_interval(secs):
-    secs = int(secs)
-    days = secs // 86400
-    hours = secs // 3600 % 24
-    minutes = secs // 60 % 60
-    seconds = secs % 60
-    parts = []
-    if days > 0:
-        parts.append('%dd' % days)
-    if hours > 0:
-        parts.append('%dh' % hours)
-    if minutes > 0:
-        parts.append('%dm' % minutes)
-    if secs > 0:
-        parts.append('%ds' % seconds)
-    return ' '.join(parts)
-
-
 class JobManager(QAbstractTableModel, AdaptSQP):  # {{{
 
     job_added = pyqtSignal(int)
     job_done  = pyqtSignal(int)
 
     def __init__(self):
+        self.header_titles = _('Job'), _('Status'), _('Progress'), _('Running time'), _('Start time'),
         QAbstractTableModel.__init__(self)
         SearchQueryParser.__init__(self, ['all'])
 
-        self.wait_icon     = (QIcon(I('jobs.png')))
-        self.running_icon  = (QIcon(I('exec.png')))
-        self.error_icon    = (QIcon(I('dialog_error.png')))
-        self.done_icon     = (QIcon(I('ok.png')))
+        self.wait_icon     = (QIcon.ic('jobs.png'))
+        self.running_icon  = (QIcon.ic('exec.png'))
+        self.error_icon    = (QIcon.ic('dialog_error.png'))
+        self.done_icon     = (QIcon.ic('ok.png'))
 
         self.jobs          = []
         self.add_job       = Dispatcher(self._add_job)
@@ -90,18 +75,13 @@ class JobManager(QAbstractTableModel, AdaptSQP):  # {{{
         return len(self.jobs)
 
     def headerData(self, section, orientation, role):
-        if role != Qt.ItemDataRole.DisplayRole:
-            return None
-        if orientation == Qt.Orientation.Horizontal:
-            return ({
-              0: _('Job'),
-              1: _('Status'),
-              2: _('Progress'),
-              3: _('Running time'),
-              4: _('Start time'),
-            }.get(section, ''))
-        else:
-            return (section+1)
+        if role == Qt.ItemDataRole.DisplayRole:
+            if orientation == Qt.Orientation.Horizontal:
+                try:
+                    return self.header_titles[section]
+                except Exception:
+                    pass
+            return str(section + 1)
 
     def show_tooltip(self, arg):
         widget, pos = arg
@@ -465,7 +445,7 @@ class DetailView(Dialog):  # {{{
         l.addWidget(self.bb)
         self.bb.clear(), self.bb.setStandardButtons(QDialogButtonBox.StandardButton.Close)
         self.copy_button = b = self.bb.addButton(_('&Copy to clipboard'), QDialogButtonBox.ButtonRole.ActionRole)
-        b.setIcon(QIcon(I('edit-copy.png')))
+        b.setIcon(QIcon.ic('edit-copy.png'))
         b.clicked.connect(self.copy_to_clipboard)
         self.next_pos = 0
         self.update()
@@ -489,7 +469,11 @@ class DetailView(Dialog):  # {{{
             more = f.read()
             self.next_pos = f.tell()
             if more:
+                v = self.log.verticalScrollBar()
+                atbottom = v.value() >= v.maximum() - 1
                 self.log.appendPlainText(more.decode('utf-8', 'replace'))
+                if atbottom:
+                    v.setValue(v.maximum())
 # }}}
 
 
@@ -645,14 +629,13 @@ class JobsDialog(QDialog, Ui_JobsDialog):
 
     def restore_state(self):
         try:
-            geom = gprefs.get('jobs_dialog_geometry', None)
-            if geom:
-                QApplication.instance().safe_restore_geometry(self, QByteArray(geom))
+            self.restore_geometry(gprefs, 'jobs_dialog_geometry')
             state = gprefs.get('jobs view column layout3', None)
             if state is not None:
                 self.jobs_view.horizontalHeader().restoreState(QByteArray(state))
-        except:
-            pass
+        except Exception:
+            import traceback
+            traceback.print_exc()
         idx = self.jobs_view.model().index(0, 0)
         if idx.isValid():
             sm = self.jobs_view.selectionModel()
@@ -660,12 +643,13 @@ class JobsDialog(QDialog, Ui_JobsDialog):
 
     def save_state(self):
         try:
-            state = bytearray(self.jobs_view.horizontalHeader().saveState())
-            gprefs['jobs view column layout3'] = state
-            geom = bytearray(self.saveGeometry())
-            gprefs['jobs_dialog_geometry'] = geom
-        except:
-            pass
+            with gprefs:
+                state = bytearray(self.jobs_view.horizontalHeader().saveState())
+                gprefs['jobs view column layout3'] = state
+                self.save_geometry(gprefs, 'jobs_dialog_geometry')
+        except Exception:
+            import traceback
+            traceback.print_exc()
 
     def show_job_details(self, index):
         index = self.proxy_model.mapToSource(index)

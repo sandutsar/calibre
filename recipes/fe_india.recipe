@@ -34,6 +34,7 @@ class FE_India(BasicNewsRecipe):
     }
 
     keep_only_tags = [classes('wp-block-post-title wp-block-post-excerpt ie-network-post-meta-wrapper wp-block-post-featured-image wp-block-post-content')]
+    remove_tags = [classes('parent_also_read')]
     remove_attributes = ['width', 'height']
 
     feeds = [
@@ -62,6 +63,11 @@ class FE_India(BasicNewsRecipe):
         ('Infrastructure','https://www.financialexpress.com/infrastructure/feed'),
         ('Money','https://www.financialexpress.com/money/feed'),
     ]
+
+    def get_cover_url(self):
+        soup = self.index_to_soup('https://www.magzter.com/IN/The-Indian-Express-Ltd./Financial-Express-Mumbai/Business/')
+        for citem in soup.findAll('meta', content=lambda s: s and s.endswith('view/3.jpg')):
+            return citem['content']
 
     def preprocess_html(self, soup, *a):
         for img in soup.findAll(attrs={'data-src': True}):

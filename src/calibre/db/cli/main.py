@@ -21,7 +21,7 @@ COMMANDS = (
     'set_metadata', 'export', 'catalog', 'saved_searches', 'add_custom_column',
     'custom_columns', 'remove_custom_column', 'set_custom', 'restore_database',
     'check_library', 'list_categories', 'backup_metadata', 'clone', 'embed_metadata',
-    'search'
+    'search', 'fts_index', 'fts_search',
 )
 
 
@@ -119,14 +119,15 @@ def read_credentials(opts):
             from getpass import getpass
             pw = getpass(_('Enter the password: '))
         elif pw.startswith('<f:') and pw.endswith('>'):
-            with lopen(pw[3:-1], 'rb') as f:
+            with open(pw[3:-1], 'rb') as f:
                 pw = f.read().decode('utf-8').rstrip()
     return username, pw
 
 
 class DBCtx:
 
-    def __init__(self, opts):
+    def __init__(self, opts, option_parser):
+        self.option_parser = option_parser
         self.library_path = opts.library_path or prefs['library_path']
         self.timeout = opts.timeout
         self.url = None
@@ -172,7 +173,7 @@ class DBCtx:
 
     def path(self, path):
         if self.is_remote:
-            with lopen(path, 'rb') as f:
+            with open(path, 'rb') as f:
                 return path, f.read()
         return path
 
@@ -243,11 +244,12 @@ def main(args=sys.argv):
             break
     else:
         parser.print_help()
-        return 1
+        print()
+        raise SystemExit(_('Error: You must specify a command from the list above'))
     del args[i]
     parser = option_parser_for(cmd, args[1:])()
     opts, args = parser.parse_args(args)
-    return run_cmd(cmd, opts, args[1:], DBCtx(opts))
+    return run_cmd(cmd, opts, args[1:], DBCtx(opts, parser))
 
 
 if __name__ == '__main__':

@@ -8,7 +8,7 @@ from qt.core import (
     QAbstractListModel, QCheckBox, QComboBox, QDialog,
     QDialogButtonBox, QFont, QFrame, QGridLayout, QHBoxLayout, QIcon, QLabel,
     QListView, QModelIndex, QScrollArea, QSize, QSizePolicy, QSpacerItem,
-    Qt, QTextEdit, QWidget, QApplication
+    Qt, QTextEdit, QWidget
 )
 
 from calibre.customize.conversion import OptionRecommendation
@@ -27,7 +27,6 @@ from calibre.gui2.convert.search_and_replace import SearchAndReplaceWidget
 from calibre.gui2.convert.structure_detection import StructureDetectionWidget
 from calibre.gui2.convert.toc import TOCWidget
 from calibre.utils.config import prefs
-from polyglot.builtins import native_string_type
 
 
 class GroupModel(QAbstractListModel):
@@ -80,20 +79,16 @@ class Config(QDialog):
                 preferred_output_format)
         self.setup_pipeline()
 
-        self.input_formats.currentIndexChanged[native_string_type].connect(self.setup_pipeline)
-        self.output_formats.currentIndexChanged[native_string_type].connect(self.setup_pipeline)
+        self.input_formats.currentIndexChanged.connect(self.setup_pipeline)
+        self.output_formats.currentIndexChanged.connect(self.setup_pipeline)
         self.groups.setSpacing(5)
         self.groups.entered[(QModelIndex)].connect(self.show_group_help)
         rb = self.buttonBox.button(QDialogButtonBox.StandardButton.RestoreDefaults)
         rb.setText(_('Restore &defaults'))
-        rb.setIcon(QIcon(I('clear_left.png')))
+        rb.setIcon(QIcon.ic('clear_left.png'))
         rb.clicked.connect(self.restore_defaults)
         self.groups.setMouseTracking(True)
-        geom = gprefs.get('convert_single_dialog_geom', None)
-        if geom:
-            QApplication.instance().safe_restore_geometry(self, geom)
-        else:
-            self.resize(self.sizeHint())
+        self.restore_geometry(gprefs, 'convert_single_dialog_geom')
 
     def current_group_changed(self, cur, prev):
         self.show_pane(cur)
@@ -101,7 +96,7 @@ class Config(QDialog):
     def setupUi(self):
         self.setObjectName("Dialog")
         self.resize(1024, 700)
-        self.setWindowIcon(QIcon(I('convert.png')))
+        self.setWindowIcon(QIcon.ic('convert.png'))
         self.gridLayout = QGridLayout(self)
         self.gridLayout.setObjectName("gridLayout")
         self.horizontalLayout = QHBoxLayout()
@@ -304,8 +299,7 @@ class Config(QDialog):
 
     def done(self, r):
         if self.isVisible():
-            gprefs['convert_single_dialog_geom'] = \
-                bytearray(self.saveGeometry())
+            self.save_geometry(gprefs, 'convert_single_dialog_geom')
         return QDialog.done(self, r)
 
     def break_cycles(self):

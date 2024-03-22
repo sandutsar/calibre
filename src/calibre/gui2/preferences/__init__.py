@@ -9,7 +9,7 @@ import textwrap
 
 from qt.core import (QWidget, pyqtSignal, QCheckBox, QAbstractSpinBox, QApplication,
     QLineEdit, QComboBox, Qt, QIcon, QDialog, QVBoxLayout,
-    QDialogButtonBox)
+    QDialogButtonBox, QListView, QEvent, QListWidget, QTableWidget)
 
 from calibre.customize.ui import preferences_plugins
 from calibre.utils.config import ConfigProxy
@@ -91,6 +91,22 @@ class ConfigWidgetInterface:
         '''
         pass
 
+    def initial_tab_changed(self):
+        '''
+        Called if the initially displayed tab is changed before the widget is shown, but after it is initialized.
+        '''
+        pass
+
+
+def set_help_tips(gui_obj, tt):
+    if tt:
+        if not str(gui_obj.whatsThis()):
+            gui_obj.setWhatsThis(tt)
+        if not str(gui_obj.statusTip()):
+            gui_obj.setStatusTip(tt)
+        tt = '\n'.join(textwrap.wrap(tt, 70))
+        gui_obj.setToolTip(tt)
+
 
 class Setting:
 
@@ -132,13 +148,7 @@ class Setting:
             if h:
                 self.gui_obj.setToolTip(h)
         tt = str(self.gui_obj.toolTip())
-        if tt:
-            if not str(self.gui_obj.whatsThis()):
-                self.gui_obj.setWhatsThis(tt)
-            if not str(self.gui_obj.statusTip()):
-                self.gui_obj.setStatusTip(tt)
-            tt = '\n'.join(textwrap.wrap(tt, 70))
-            self.gui_obj.setToolTip(tt)
+        set_help_tips(self.gui_obj, tt)
 
     def changed(self, *args):
         self.widget.changed_signal.emit()
@@ -267,7 +277,7 @@ class ConfigWidgetBase(QWidget, ConfigWidgetInterface):
         Register a setting.
 
         :param name: The setting name
-        :param config: The config object that reads/writes the setting
+        :param config_obj: The config object that reads/writes the setting
         :param gui_name: The name of the GUI object that presents an interface
                          to change the setting. By default it is assumed to be
                          ``'opt_' + name``.
@@ -357,9 +367,8 @@ def show_config_widget(category, name, gui=None, show_restart_msg=False,
     d = ConfigDialog(parent)
     d.resize(750, 550)
     conf_name = 'config_widget_dialog_geometry_%s_%s'%(category, name)
-    geom = gprefs.get(conf_name, None)
     d.setWindowTitle(_('Configure ') + pl.gui_name)
-    d.setWindowIcon(QIcon(I('config.png')))
+    d.setWindowIcon(QIcon.ic('config.png'))
     bb = QDialogButtonBox(d)
     bb.setStandardButtons(QDialogButtonBox.StandardButton.Apply|QDialogButtonBox.StandardButton.Cancel|QDialogButtonBox.StandardButton.RestoreDefaults)
     bb.accepted.connect(d.accept)
@@ -388,11 +397,9 @@ def show_config_widget(category, name, gui=None, show_restart_msg=False,
         mygui = True
     w.genesis(gui)
     w.initialize()
-    if geom is not None:
-        QApplication.instance().safe_restore_geometry(d, geom)
+    d.restore_geometry(gprefs, conf_name)
     d.exec()
-    geom = bytearray(d.saveGeometry())
-    gprefs[conf_name] = geom
+    d.save_geometry(gprefs, conf_name)
     rr = getattr(d, 'restart_required', False)
     if show_restart_msg and rr:
         from calibre.gui2 import warning_dialog
@@ -400,6 +407,58 @@ def show_config_widget(category, name, gui=None, show_restart_msg=False,
     if mygui and not never_shutdown:
         gui.shutdown()
     return rr
+
+
+class ListViewWithMoveByKeyPress(QListView):
+
+    def set_movement_functions(self, up_function, down_function):
+        self.up_function = up_function
+        self.down_function = down_function
+
+    def event(self, event):
+        if (event.type() == QEvent.KeyPress and
+            QApplication.keyboardModifiers() == Qt.KeyboardModifier.ControlModifier):
+            if event.key() == Qt.Key.Key_Up:
+                self.up_function()
+            elif event.key() == Qt.Key.Key_Down:
+                self.down_function()
+            return True
+        return QListView.event(self, event)
+
+
+class ListWidgetWithMoveByKeyPress(QListWidget):
+
+    def set_movement_functions(self, up_function, down_function):
+        self.up_function = up_function
+        self.down_function = down_function
+
+    def event(self, event):
+        if (event.type() == QEvent.KeyPress and
+            QApplication.keyboardModifiers() == Qt.KeyboardModifier.ControlModifier):
+            if event.key() == Qt.Key.Key_Up:
+                self.up_function()
+            elif event.key() == Qt.Key.Key_Down:
+                self.down_function()
+            return True
+        return QListWidget.event(self, event)
+
+
+class TableWidgetWithMoveByKeyPress(QTableWidget):
+
+    def set_movement_functions(self, up_function, down_function):
+        self.up_function = up_function
+        self.down_function = down_function
+
+    def event(self, event):
+        if (event.type() == QEvent.KeyPress and
+            QApplication.keyboardModifiers() == Qt.KeyboardModifier.ControlModifier):
+            if event.key() == Qt.Key.Key_Up:
+                self.up_function()
+            elif event.key() == Qt.Key.Key_Down:
+                self.down_function()
+            return True
+        return QTableWidget.event(self, event)
+
 
 # Testing {{{
 

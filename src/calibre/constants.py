@@ -1,10 +1,11 @@
 #!/usr/bin/env python
 # License: GPLv3 Copyright: 2015, Kovid Goyal <kovid at kovidgoyal.net>
 from polyglot.builtins import environ_item, hasenv
+from functools import lru_cache
 import sys, locale, codecs, os, collections, collections.abc
 
 __appname__   = 'calibre'
-numeric_version = (5, 37, 0)
+numeric_version = (7, 7, 100)
 __version__   = '.'.join(map(str, numeric_version))
 git_version   = None
 __author__    = "Kovid Goyal <kovid@kovidgoyal.net>"
@@ -23,7 +24,7 @@ isnetbsd = 'netbsd' in _plat
 isdragonflybsd = 'dragonfly' in _plat
 isbsd = isfreebsd or isnetbsd or isdragonflybsd
 ishaiku = 'haiku1' in _plat
-islinux   = not(iswindows or ismacos or isbsd or ishaiku)
+islinux   = not (iswindows or ismacos or isbsd or ishaiku)
 isfrozen  = hasattr(sys, 'frozen')
 isunix = ismacos or islinux or ishaiku
 isportable = hasenv('CALIBRE_PORTABLE_BUILD')
@@ -33,11 +34,12 @@ if iswindows:
     wver = sys.getwindowsversion()
     isxp = wver.major < 6
     isoldvista = wver.build < 6002
-is64bit = sys.maxsize > (1 << 32)
+is64bit = True
 isworker = hasenv('CALIBRE_WORKER') or hasenv('CALIBRE_SIMPLE_WORKER')
 if isworker:
     os.environ.pop(environ_item('CALIBRE_FORCE_ANSI'), None)
 FAKE_PROTOCOL, FAKE_HOST = 'clbr', 'internal.invalid'
+SPECIAL_TITLE_FOR_WEBENGINE_COMMS = '__webengine_messages_pending__'
 VIEWER_APP_UID = 'com.calibre-ebook.viewer'
 EDITOR_APP_UID = 'com.calibre-ebook.edit-book'
 MAIN_APP_UID = 'com.calibre-ebook.main-gui'
@@ -58,7 +60,7 @@ builtin_colors_light = {
     'purple': '#d9b2ff',
 }
 builtin_colors_dark = {
-    'yellow': '#c18d18',
+    'yellow': '#906e00',
     'green': '#306f50',
     'blue': '#265589',
     'red': '#a23e5a',
@@ -107,9 +109,13 @@ else:
 DEBUG = hasenv('CALIBRE_DEBUG')
 
 
-def debug():
+def debug(val=True):
     global DEBUG
-    DEBUG = True
+    DEBUG = bool(val)
+
+
+def is_debugging():
+    return DEBUG
 
 
 def _get_cache_dir():
@@ -198,6 +204,15 @@ class DeVendor:
             return find_spec('feedparser')
         if fullname.startswith('calibre.ebooks.markdown'):
             return ModuleSpec(fullname, DeVendorLoader(fullname[len('calibre.ebooks.'):]))
+        if fullname.startswith('PyQt5'):
+            # this is present for third party plugin compat
+            if fullname == 'PyQt5':
+                return ModuleSpec(fullname, DeVendorLoader('qt'))
+            return ModuleSpec(fullname, DeVendorLoader('qt.webengine' if 'QWebEngine' in fullname else 'qt.core'))
+        if fullname.startswith('Cryptodome'):
+            # this is needed for py7zr which uses pycryptodomex instead of
+            # pycryptodome for some reason
+            return ModuleSpec(fullname, DeVendorLoader(fullname.replace('dome', '', 1)))
 
 
 class ExtensionsPackageLoader:
@@ -234,6 +249,7 @@ class ExtensionsImporter:
             'podofo',
             'cPalmdoc',
             'progress_indicator',
+            'rcc_backend',
             'icu',
             'speedup',
             'html_as_json',
@@ -250,9 +266,10 @@ class ExtensionsImporter:
             'tokenizer',
             'certgen',
             'sqlite_extension',
+            'uchardet',
         )
         if iswindows:
-            extra = ('winutil', 'wpd', 'winfonts', 'winsapi')
+            extra = ('winutil', 'wpd', 'winfonts', 'winsapi', 'winspeech')
         elif ismacos:
             extra = ('usbobserver', 'cocoa', 'libusb', 'libmtp')
         elif isfreebsd or ishaiku or islinux:
@@ -329,6 +346,15 @@ class Plugins(collections.abc.Mapping):
         finally:
             conn.enableloadextension(False)
 
+    def load_sqlite3_extension(self, conn, name):
+        conn.enable_load_extension(True)
+        try:
+            ext = 'pyd' if iswindows else 'so'
+            path = os.path.join(plugins_loc, f'{name}.{ext}')
+            conn.load_extension(path)
+        finally:
+            conn.enable_load_extension(False)
+
 
 plugins = None
 if plugins is None:
@@ -386,6 +412,9 @@ if getattr(sys, 'frozen', False):
         is_running_from_develop = running_in_develop_mode()
 
 in_develop_mode = os.getenv('CALIBRE_ENABLE_DEVELOP_MODE') == '1'
+if iswindows:
+    # Needed to get Qt to use the correct cache dir, relies on a patched Qt
+    os.environ['CALIBRE_QT_CACHE_LOCATION'] = cache_dir()
 
 
 def get_version():
@@ -398,8 +427,6 @@ def get_version():
             v = v[:-2]
     if is_running_from_develop:
         v += '*'
-    if iswindows and is64bit:
-        v += ' [64bit]'
 
     return v
 
@@ -445,3 +472,16 @@ def get_windows_number_formats():
 
 def trash_name():
     return _('Trash') if ismacos else _('Recycle Bin')
+
+
+@lru_cache(maxsize=2)
+def get_umask():
+    mask = os.umask(0o22)
+    os.umask(mask)
+    return mask
+
+
+# call this at startup as it changed process global state, which doesn't work
+# with multi-threading. It's absurd there is no way to safely read the current
+# umask of a process.
+get_umask()

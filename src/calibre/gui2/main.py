@@ -2,23 +2,22 @@
 # License: GPLv3 Copyright: 2015, Kovid Goyal <kovid at kovidgoyal.net>
 
 
+import apsw
 import os
 import re
 import sys
 import time
 import traceback
-
-import apsw
 from qt.core import QCoreApplication, QIcon, QObject, QTimer
 
 from calibre import force_unicode, prints
 from calibre.constants import (
-    DEBUG, MAIN_APP_UID, __appname__, filesystem_encoding, get_portable_base,
-    islinux, ismacos, iswindows
+    DEBUG, MAIN_APP_UID, __appname__, filesystem_encoding, get_portable_base, islinux,
+    ismacos, iswindows,
 )
 from calibre.gui2 import (
     Application, choose_dir, error_dialog, gprefs, initialize_file_icon_provider,
-    question_dialog, setup_gui_option_parser
+    question_dialog, setup_gui_option_parser, timed_print,
 )
 from calibre.gui2.listener import send_message_in_process
 from calibre.gui2.main_window import option_parser as _option_parser
@@ -26,6 +25,7 @@ from calibre.gui2.splash_screen import SplashScreen
 from calibre.utils.config import dynamic, prefs
 from calibre.utils.lock import SingleInstance
 from calibre.utils.monotonic import monotonic
+from calibre.utils.resources import get_image_path as I
 from polyglot.builtins import as_bytes, environ_item
 
 after_quit_actions = {'debug_on_restart': False, 'restart_after_quit': False, 'no_plugins_on_restart': False}
@@ -197,6 +197,7 @@ def repair_library(library_path):
 
 def windows_repair(library_path=None):
     import subprocess
+
     from calibre.utils.serialize import json_dumps, json_loads
     from polyglot.binary import as_hex_unicode, from_hex_bytes
     if library_path:
@@ -234,7 +235,7 @@ class GuiRunner(QObject):
 
     def __init__(self, opts, args, actions, app, gui_debug=None):
         self.startup_time = monotonic()
-        self.timed_print('Starting up...')
+        timed_print('Starting up...')
         self.opts, self.args, self.app = opts, args, app
         self.gui_debug = gui_debug
         self.actions = actions
@@ -243,27 +244,23 @@ class GuiRunner(QObject):
         self.splash_screen = None
         self.timer = QTimer.singleShot(1, self.initialize)
 
-    def timed_print(self, *a, **kw):
-        if DEBUG:
-            prints(f'[{monotonic() - self.startup_time:.2f}]', *a, **kw)
-
     def start_gui(self, db):
         from calibre.gui2.ui import Main
-        self.timed_print('Constructing main UI...')
-        main = self.main = Main(self.opts, gui_debug=self.gui_debug)
+        timed_print('Constructing main UI...')
         if self.splash_screen is not None:
             self.splash_screen.show_message(_('Initializing user interface...'))
+        main = self.main = Main(self.opts, gui_debug=self.gui_debug)
         try:
             with gprefs:  # Only write gui.json after initialization is complete
                 main.initialize(self.library_path, db, self.actions)
         finally:
-            self.timed_print('main UI initialized...')
+            timed_print('main UI initialized...')
             if self.splash_screen is not None:
-                self.timed_print('Hiding splash screen')
+                timed_print('Hiding splash screen')
                 self.splash_screen.finish(main)
-                self.timed_print('splash screen hidden')
+                timed_print('splash screen hidden')
             self.splash_screen = None
-        self.timed_print('Started up in %.2f seconds'%(monotonic() - self.startup_time), 'with', len(db.data), 'books')
+        timed_print('Started up in %.2f seconds'%(monotonic() - self.startup_time), 'with', len(db.data), 'books')
         main.set_exception_handler()
         if len(self.args) > 1:
             main.handle_cli_args(self.args[1:])
@@ -278,6 +275,7 @@ class GuiRunner(QObject):
                 default_dir=initial_dir)
 
     def show_error(self, title, msg, det_msg=''):
+        print(det_msg, file=sys.stderr)
         self.hide_splash_screen()
         with self.app:
             error_dialog(self.splash_screen, title, msg, det_msg=det_msg, show=True)
@@ -309,7 +307,7 @@ class GuiRunner(QObject):
                     det_msg=traceback.format_exc())
                 self.initialization_failed()
 
-        self.timed_print('db initialized')
+        timed_print('db initialized')
         try:
             self.start_gui(db)
         except Exception:
@@ -324,7 +322,7 @@ class GuiRunner(QObject):
     def initialize_db(self):
         from calibre.db.legacy import LibraryDatabase
         db = None
-        self.timed_print('Initializing db...')
+        timed_print('Initializing db...')
         try:
             db = LibraryDatabase(self.library_path)
         except apsw.Error:
@@ -357,11 +355,11 @@ class GuiRunner(QObject):
         self.initialize_db_stage2(db, None)
 
     def show_splash_screen(self):
-        self.timed_print('Showing splash screen...')
+        timed_print('Showing splash screen...')
         self.splash_screen = SplashScreen()
         self.splash_screen.show()
         self.splash_screen.show_message(_('Starting %s: Loading books...') % __appname__)
-        self.timed_print('splash screen shown')
+        timed_print('splash screen shown')
 
     def hide_splash_screen(self):
         if self.splash_screen is not None:
@@ -379,13 +377,15 @@ class GuiRunner(QObject):
 
 
 def run_in_debug_mode():
+    import subprocess
+    import tempfile
+
     from calibre.debug import run_calibre_debug
-    import tempfile, subprocess
     fd, logpath = tempfile.mkstemp('.txt')
     os.close(fd)
     run_calibre_debug(
-        '--gui-debug', logpath, stdout=lopen(logpath, 'wb'),
-        stderr=subprocess.STDOUT, stdin=lopen(os.devnull, 'rb'))
+        '--gui-debug', logpath, stdout=open(logpath, 'wb'),
+        stderr=subprocess.STDOUT, stdin=open(os.devnull, 'rb'))
 
 
 def run_gui(opts, args, app, gui_debug=None):
@@ -433,6 +433,8 @@ def run_gui_(opts, args, app, gui_debug=None):
         debugfile = runner.main.gui_debug
         from calibre.gui2 import open_local_file
         if iswindows:
+            # detach the stdout/stderr/stdin handles
+            winutil.prepare_for_restart()
             with open(debugfile, 'r+b') as f:
                 raw = f.read()
                 raw = re.sub(b'(?<!\r)\n', b'\r\n', raw)
@@ -446,7 +448,11 @@ def run_gui_(opts, args, app, gui_debug=None):
 singleinstance_name = 'GUI'
 
 
-def send_message(msg):
+class FailedToCommunicate(Exception):
+    pass
+
+
+def send_message(msg, retry_communicate=False):
     try:
         send_message_in_process(msg)
     except Exception:
@@ -454,6 +460,10 @@ def send_message(msg):
         try:
             send_message_in_process(msg)
         except Exception as err:
+            # can happen because the Qt local server pipe is shutdown before
+            # the single instance mutex is released
+            if retry_communicate:
+                raise FailedToCommunicate('retrying')
             print(_('Failed to contact running instance of calibre'), file=sys.stderr, flush=True)
             print(err, file=sys.stderr, flush=True)
             if Application.instance():
@@ -475,14 +485,17 @@ def shutdown_other():
         raise SystemExit(_('Failed to shutdown running calibre instance'))
 
 
-def communicate(opts, args):
+def communicate(opts, args, retry_communicate=False):
     if opts.shutdown_running_calibre:
         shutdown_other()
     else:
         if len(args) > 1:
             args[1:] = [os.path.abspath(x) if os.path.exists(x) else x for x in args[1:]]
+        if opts.with_library and os.path.isdir(os.path.expanduser(opts.with_library)):
+            library_id = os.path.basename(opts.with_library).replace(' ', '_').encode('utf-8').hex()
+            args.insert(1, 'calibre://switch-library/_hex_-' + library_id)
         import json
-        if not send_message(b'launched:'+as_bytes(json.dumps(args))):
+        if not send_message(b'launched:'+as_bytes(json.dumps(args)), retry_communicate=retry_communicate):
             raise SystemExit(_('Failed to contact running instance of calibre'))
     raise SystemExit(0)
 
@@ -532,18 +545,24 @@ def main(args=sys.argv):
         app, opts, args = init_qt(args)
     except AbortInit:
         return 1
-    with SingleInstance(singleinstance_name) as si:
-        if si and opts.shutdown_running_calibre:
-            return 0
-        run_main(app, opts, args, gui_debug, si)
+    try:
+        with SingleInstance(singleinstance_name) as si:
+            if si and opts.shutdown_running_calibre:
+                return 0
+            run_main(app, opts, args, gui_debug, si, retry_communicate=True)
+    except FailedToCommunicate:
+        with SingleInstance(singleinstance_name) as si:
+            if si and opts.shutdown_running_calibre:
+                return 0
+            run_main(app, opts, args, gui_debug, si, retry_communicate=False)
     if after_quit_actions['restart_after_quit']:
         restart_after_quit()
 
 
-def run_main(app, opts, args, gui_debug, si):
+def run_main(app, opts, args, gui_debug, si, retry_communicate=False):
     if si:
         return run_gui(opts, args, app, gui_debug=gui_debug)
-    communicate(opts, args)
+    communicate(opts, args, retry_communicate)
     return 0
 
 

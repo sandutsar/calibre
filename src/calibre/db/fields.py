@@ -21,6 +21,9 @@ from calibre.utils.localization import calibre_langcode_to_name
 from polyglot.builtins import iteritems
 
 
+rendering_composite_name = '__rendering_composite__'
+
+
 def bool_sort_key(bools_are_tristate):
     return (lambda x:{True: 1, False: 2, None: 3}.get(x, 3)) if bools_are_tristate else lambda x:{True: 1, False: 2, None: 2}.get(x, 2)
 
@@ -44,7 +47,8 @@ def numeric_sort_key(defval, x):
     return x if type(x) in (int, float) else defval
 
 
-IDENTITY = lambda x: x
+def IDENTITY(x):
+    return x
 
 
 class InvalidLinkTable(Exception):
@@ -296,7 +300,8 @@ class CompositeField(OneToOneField):
         ans = formatter.safe_format(
             self.metadata['display']['composite_template'], mi, _('TEMPLATE ERROR'),
             mi, column_name=self._composite_name, template_cache=template_cache,
-            template_functions=self.get_template_functions()).strip()
+            template_functions=self.get_template_functions(),
+            global_vars={rendering_composite_name:'1'}).strip()
         with self._lock:
             self._render_cache[book_id] = ans
         return ans
@@ -341,9 +346,16 @@ class CompositeField(OneToOneField):
         for book_id in candidates:
             vals = self.get_value_with_cache(book_id, get_metadata)
             vals = (vv.strip() for vv in vals.split(splitter)) if splitter else (vals,)
+            found = False
             for v in vals:
                 if v:
                     val_map[v].add(book_id)
+                    found = True
+            if not found:
+                # Convert columns with no value to None to ensure #x:false
+                # searches work. We do it outside the loop to avoid generating
+                # None for is_multiple columns containing text like "a,,,b".
+                val_map[None].add(book_id)
         yield from iteritems(val_map)
 
     def iter_counts(self, candidates, get_metadata=None):
@@ -630,7 +642,7 @@ class AuthorsField(ManyToManyField):
         return {
             'name': self.table.id_map[author_id],
             'sort': self.table.asort_map[author_id],
-            'link': self.table.alink_map[author_id],
+            'link': self.table.link_map[author_id],
         }
 
     def category_sort_value(self, item_id, book_ids, lang_map):

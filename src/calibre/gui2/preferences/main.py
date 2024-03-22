@@ -16,10 +16,10 @@ from qt.core import (
     QVBoxLayout, QWidget, pyqtSignal
 )
 
-from calibre.constants import __appname__, __version__, islinux
+from calibre.constants import __appname__, __version__
 from calibre.customize.ui import preferences_plugins
 from calibre.gui2 import (
-    available_width, gprefs, min_available_height, show_restart_warning
+    gprefs, show_restart_warning
 )
 from calibre.gui2.dialogs.message_box import Icon
 from calibre.gui2.preferences import (
@@ -95,7 +95,7 @@ class TitleBar(QWidget):
         self.show_msg()
 
     def show_plugin(self, plugin=None):
-        self.icon.set_icon(QIcon(I('lt.png') if plugin is None else plugin.icon))
+        self.icon.set_icon(QIcon.ic('lt.png' if plugin is None else plugin.icon))
         self.title.setText('<h1>' + (_('Preferences') if plugin is None else plugin.gui_name))
 
     def show_msg(self, msg=None):
@@ -136,7 +136,7 @@ class Category(QWidget):  # {{{
         self.actions = []
         for p in plugins:
             target = partial(self.triggered, p)
-            ac = self.bar.addAction(QIcon(p.icon), p.gui_name.replace('&', '&&'), target)
+            ac = self.bar.addAction(QIcon.ic(p.icon), p.gui_name.replace('&', '&&'), target)
             ac.setToolTip(textwrap.fill(p.description))
             ac.setWhatsThis(textwrap.fill(p.description))
             ac.setStatusTip(p.description)
@@ -214,27 +214,11 @@ class Preferences(QDialog):
         self.committed = False
         self.close_after_initial = close_after_initial
 
-        self.resize(930, 720)
-        nh, nw = min_available_height()-25, available_width()-10
-        if nh < 0:
-            nh = 800
-        if nw < 0:
-            nw = 600
-        nh = min(self.height(), nh)
-        nw = min(self.width(), nw)
-        self.resize(nw, nh)
-
-        geom = gprefs.get('preferences dialog geometry', None)
-        if geom is not None:
-            QApplication.instance().safe_restore_geometry(self, geom)
-
-        # Center
-        if islinux:
-            self.move(gui.rect().center() - self.rect().center())
+        self.restore_geometry(gprefs, 'preferences dialog geometry')
 
         self.setWindowModality(Qt.WindowModality.ApplicationModal)
         self.setWindowTitle(__appname__ + ' — ' + _('Preferences'))
-        self.setWindowIcon(QIcon(I('config.png')))
+        self.setWindowIcon(QIcon.ic('config.png'))
         self.l = l = QVBoxLayout(self)
 
         self.stack = QStackedWidget(self)
@@ -243,10 +227,10 @@ class Preferences(QDialog):
             QDialogButtonBox.StandardButton.Cancel
         )
         self.bb.button(QDialogButtonBox.StandardButton.Apply).clicked.connect(self.accept)
-        self.wizard_button = QPushButton(QIcon(I('wizard.png')), _('Run Welcome &wizard'))
+        self.wizard_button = QPushButton(QIcon.ic('wizard.png'), _('Run Welcome &wizard'))
         self.wizard_button.clicked.connect(self.run_wizard, type=Qt.ConnectionType.QueuedConnection)
         self.wizard_button.setAutoDefault(False)
-        self.restore_defaults_button = rdb = QPushButton(QIcon(I('clear_left.png')), _('Restore &defaults'))
+        self.restore_defaults_button = rdb = QPushButton(QIcon.ic('clear_left.png'), _('Restore &defaults'))
         rdb.clicked.connect(self.restore_defaults, type=Qt.ConnectionType.QueuedConnection)
         rdb.setAutoDefault(False)
         rdb.setVisible(False)
@@ -282,9 +266,16 @@ class Preferences(QDialog):
                                 idx = c.indexOf(w)
                                 if idx > -1:
                                     c.setCurrentIndex(idx)
+                                    try:
+                                        self.showing_widget.initial_tab_changed()
+                                    except Exception:
+                                        pass
                                     break
         else:
             self.hide_plugin()
+
+    def sizeHint(self):
+        return QSize(930, 720)
 
     def event(self, ev):
         if isinstance(ev, QStatusTipEvent):
@@ -327,7 +318,7 @@ class Preferences(QDialog):
         self.setWindowTitle(__appname__ + ' - ' + _('Preferences') + ' - ' + plugin.gui_name)
         self.showing_widget.restart_now.connect(self.restart_now)
         self.title_bar.show_plugin(plugin)
-        self.setWindowIcon(QIcon(plugin.icon))
+        self.setWindowIcon(QIcon.ic(plugin.icon))
 
         self.bb.button(QDialogButtonBox.StandardButton.Close).setVisible(False)
         self.wizard_button.setVisible(False)
@@ -355,12 +346,12 @@ class Preferences(QDialog):
                 getattr(self.showing_widget, sig).disconnect(getattr(self, sig))
             except Exception:
                 pass
+        self.stack.setCurrentIndex(0)
         self.showing_widget = QWidget(self.scroll_area)
         self.scroll_area.setWidget(self.showing_widget)
         self.setWindowTitle(__appname__ + ' - ' + _('Preferences'))
-        self.stack.setCurrentIndex(0)
         self.title_bar.show_plugin()
-        self.setWindowIcon(QIcon(I('config.png')))
+        self.setWindowIcon(QIcon.ic('config.png'))
 
         for button in (QDialogButtonBox.StandardButton.Apply, QDialogButtonBox.StandardButton.Cancel):
             button = self.bb.button(button)
@@ -405,7 +396,7 @@ class Preferences(QDialog):
         self.showing_widget.restore_defaults()
 
     def on_shutdown(self):
-        gprefs.set('preferences dialog geometry', bytearray(self.saveGeometry()))
+        self.save_geometry(gprefs, 'preferences dialog geometry')
         if self.committed:
             self.gui.must_restart_before_config = self.must_restart
             self.gui.tags_view.recount()

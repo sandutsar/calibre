@@ -9,15 +9,17 @@ import textwrap
 from bisect import bisect
 from functools import partial
 from qt.core import (
-    QAbstractItemModel, QAbstractListModel, QApplication, QCheckBox, QGridLayout,
-    QHBoxLayout, QIcon, QInputMethodEvent, QLabel, QListView, QMenu, QMimeData,
-    QModelIndex, QPen, QPushButton, QSize, QSizePolicy, QSplitter,
-    QStyledItemDelegate, Qt, QToolButton, QTreeView, pyqtSignal, QAbstractItemView, QDialogButtonBox
+    QAbstractItemModel, QAbstractItemView, QAbstractListModel, QApplication, QCheckBox,
+    QDialogButtonBox, QGridLayout, QHBoxLayout, QIcon, QInputMethodEvent, QLabel,
+    QListView, QMenu, QMimeData, QModelIndex, QPen, QPushButton, QSize, QSizePolicy,
+    QSplitter, QStyledItemDelegate, Qt, QToolButton, QTreeView, pyqtSignal,
 )
 
 from calibre.gui2.tweak_book import tprefs
-from calibre.gui2.tweak_book.widgets import BusyCursor, Dialog
+from calibre.gui2.tweak_book.widgets import Dialog
+from calibre.gui2.widgets import BusyCursor
 from calibre.gui2.widgets2 import HistoryLineEdit2
+from calibre.startup import connect_lambda
 from calibre.utils.icu import safe_chr as codepoint_to_chr
 from calibre.utils.unicode_names import character_name_from_code, points_for_word
 from calibre_extensions.progress_indicator import set_no_activate_on_click
@@ -370,7 +372,7 @@ class CategoryModel(QAbstractItemModel):
         self.starts.sort()
         self.bold_font = f = QApplication.font()
         f.setBold(True)
-        self.fav_icon = QIcon(I('rating.png'))
+        self.fav_icon = QIcon.ic('rating.png')
 
     def columnCount(self, parent=ROOT):
         return 1
@@ -658,8 +660,8 @@ class CharView(QListView):
                 pass
             else:
                 m = QMenu(self)
-                m.addAction(QIcon(I('edit-copy.png')), _('Copy %s to clipboard') % codepoint_to_chr(char_code), partial(self.copy_to_clipboard, char_code))
-                m.addAction(QIcon(I('rating.png')),
+                m.addAction(QIcon.ic('edit-copy.png'), _('Copy %s to clipboard') % codepoint_to_chr(char_code), partial(self.copy_to_clipboard, char_code))
+                m.addAction(QIcon.ic('rating.png'),
                             (_('Remove %s from favorites') if self.showing_favorites else _('Add %s to favorites')) % codepoint_to_chr(char_code),
                             partial(self.remove_from_favorites, char_code))
                 if self.showing_favorites:
@@ -694,7 +696,7 @@ class CharSelect(Dialog):
     def __init__(self, parent=None):
         self.initialized = False
         Dialog.__init__(self, _('Insert character'), 'charmap_dialog', parent)
-        self.setWindowIcon(QIcon(I('character-set.png')))
+        self.setWindowIcon(QIcon.ic('character-set.png'))
         self.setFocusProxy(parent)
 
     def setup_ui(self):
@@ -724,7 +726,7 @@ class CharSelect(Dialog):
         h.returnPressed.connect(self.do_search)
         b.clicked.connect(self.do_search)
         self.clear_button = cb = QToolButton(self)
-        cb.setIcon(QIcon(I('clear_left.png')))
+        cb.setIcon(QIcon.ic('clear_left.png'))
         cb.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         cb.setText(_('Clear search'))
         cb.clicked.connect(self.clear_search)
@@ -732,6 +734,7 @@ class CharSelect(Dialog):
 
         self.category_view = CategoryView(self)
         self.category_view.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.category_view.clicked.connect(self.category_view_clicked)
         l.addWidget(s, 1, 0, 1, 3)
         self.char_view = CharView(self)
         self.char_view.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -759,6 +762,11 @@ class CharSelect(Dialog):
         h.addWidget(mm), h.addStretch(), h.addWidget(self.bb)
         l.addLayout(h, 4, 0, 1, 3)
         self.char_view.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def category_view_clicked(self):
+        p = self.parent()
+        if p is not None and p.focusWidget() is not None:
+            p.activateWindow()
 
     def do_search(self):
         text = str(self.search.text()).strip()
@@ -802,7 +810,7 @@ class CharSelect(Dialog):
     def show(self):
         self.initialize()
         Dialog.show(self)
-        self.raise_()
+        self.raise_and_focus()
 
     def char_selected(self, c):
         if QApplication.keyboardModifiers() & Qt.KeyboardModifier.ControlModifier:

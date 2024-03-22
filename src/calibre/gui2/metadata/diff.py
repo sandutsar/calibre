@@ -12,7 +12,7 @@ from qt.core import (
     QAction, QApplication, QCheckBox, QColor, QDialog, QDialogButtonBox, QFont,
     QGridLayout, QHBoxLayout, QIcon, QKeySequence, QLabel, QMenu, QPainter, QPen,
     QPixmap, QScrollArea, QSize, QSizePolicy, QStackedLayout, Qt, QToolButton,
-    QVBoxLayout, QWidget, pyqtSignal
+    QVBoxLayout, QWidget, pyqtSignal,
 )
 
 from calibre import fit_image
@@ -25,7 +25,10 @@ from calibre.gui2.languages import LanguagesEdit as LE
 from calibre.gui2.metadata.basic_widgets import PubdateEdit, RatingEdit
 from calibre.gui2.widgets2 import RightClickButton
 from calibre.ptempfile import PersistentTemporaryFile
+from calibre.startup import connect_lambda
 from calibre.utils.date import UNDEFINED_DATE
+from calibre.utils.icu import lower as icu_lower
+from calibre.utils.localization import ngettext
 from polyglot.builtins import iteritems, itervalues
 
 Widgets = namedtuple('Widgets', 'new old label button')
@@ -44,6 +47,7 @@ class LineEdit(EditWithComplete):
         self.metadata = metadata
         if not is_new:
             self.setReadOnly(True)
+            self.setClearButtonEnabled(False)
         else:
             sep = metadata['is_multiple']['list_to_ui'] if metadata['is_multiple'] else None
             self.set_separator(sep)
@@ -121,6 +125,7 @@ class LanguagesEdit(LE):
         self.textChanged.connect(self.changed)
         if not is_new:
             self.lineEdit().setReadOnly(True)
+            self.lineEdit().setClearButtonEnabled(False)
 
     @property
     def current_val(self):
@@ -318,8 +323,9 @@ class CoverView(QWidget):
         self.field = field
         self.metadata = metadata
         self.pixmap = None
-        self.blank = QPixmap(I('blank.png'))
-        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.PolicyFlag.GrowFlag|QSizePolicy.PolicyFlag.ExpandFlag)
+        ic = QIcon.ic('blank.png')
+        self.blank = ic.pixmap(ic.availableSizes()[0])
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.MinimumExpanding)
         self.sizePolicy().setHeightForWidth(True)
 
     def mouseDoubleClickEvent(self, ev):
@@ -460,7 +466,7 @@ class CompareSingle(QWidget):
             newl = QLabel('&%s:' % m['name'])
             newl.setBuddy(neww)
             button = RightClickButton(self)
-            button.setIcon(QIcon(I('back.png')))
+            button.setIcon(QIcon.ic('back.png'))
             button.setObjectName(field)
             connect_lambda(button.clicked, self, lambda self: self.revert(self.sender().objectName()))
             button.setToolTip(revert_tooltip % m['name'])
@@ -471,7 +477,7 @@ class CompareSingle(QWidget):
                 m.addAction(button.toolTip()).triggered.connect(button.click)
                 m.actions()[0].setIcon(button.icon())
                 m.addAction(_('Merge identifiers')).triggered.connect(self.merge_identifiers)
-                m.actions()[1].setIcon(QIcon(I('merge.png')))
+                m.actions()[1].setIcon(QIcon.ic('merge.png'))
             elif field == 'tags':
                 button.m = m = QMenu(button)
                 button.setMenu(m)
@@ -479,7 +485,7 @@ class CompareSingle(QWidget):
                 m.addAction(button.toolTip()).triggered.connect(button.click)
                 m.actions()[0].setIcon(button.icon())
                 m.addAction(_('Merge tags')).triggered.connect(self.merge_tags)
-                m.actions()[1].setIcon(QIcon(I('merge.png')))
+                m.actions()[1].setIcon(QIcon.ic('merge.png'))
 
             if cls is CoverView:
                 neww.zoom_requested.connect(self.zoom_requested)
@@ -613,7 +619,7 @@ class CompareMany(QDialog):
         self.l = l = QVBoxLayout(w)
         s.addWidget(w)
         self.next_called = False
-        self.setWindowIcon(QIcon(I('auto_author_sort.png')))
+        self.setWindowIcon(QIcon.ic('auto_author_sort.png'))
         self.get_metadata = get_metadata
         self.ids = list(ids)
         self.total = len(self.ids)
@@ -641,12 +647,12 @@ class CompareMany(QDialog):
         bb.rejected.connect(self.reject)
         if self.total > 1:
             self.aarb = b = bb.addButton(_('&Accept all remaining'), QDialogButtonBox.ButtonRole.YesRole)
-            b.setIcon(QIcon(I('ok.png'))), b.setAutoDefault(False)
+            b.setIcon(QIcon.ic('ok.png')), b.setAutoDefault(False)
             if accept_all_tooltip:
                 b.setToolTip(accept_all_tooltip)
             b.clicked.connect(self.accept_all_remaining)
             self.rarb = b = bb.addButton(_('Re&ject all remaining'), QDialogButtonBox.ButtonRole.ActionRole)
-            b.setIcon(QIcon(I('minus.png'))), b.setAutoDefault(False)
+            b.setIcon(QIcon.ic('minus.png')), b.setAutoDefault(False)
             if reject_all_tooltip:
                 b.setToolTip(reject_all_tooltip)
             b.clicked.connect(self.reject_all_remaining)
@@ -657,7 +663,7 @@ class CompareMany(QDialog):
             self.addAction(ac)
             b.setToolTip(_('Reject changes and move to next [{}]').format(ac.shortcut().toString(QKeySequence.SequenceFormat.NativeText)))
             connect_lambda(b.clicked, self, lambda self: self.next_item(False))
-            b.setIcon(QIcon(I('minus.png'))), b.setAutoDefault(False)
+            b.setIcon(QIcon.ic('minus.png')), b.setAutoDefault(False)
             if reject_button_tooltip:
                 b.setToolTip(reject_button_tooltip)
             self.next_action = ac = QAction(self)
@@ -665,14 +671,14 @@ class CompareMany(QDialog):
             self.addAction(ac)
         if action_button is not None:
             self.acb = b = bb.addButton(action_button[0], QDialogButtonBox.ButtonRole.ActionRole)
-            b.setIcon(QIcon(action_button[1]))
+            b.setIcon(QIcon.ic(action_button[1]))
             self.action_button_action = action_button[2]
             b.clicked.connect(self.action_button_clicked)
         self.nb = b = bb.addButton(_('&Next') if self.total > 1 else _('&OK'), QDialogButtonBox.ButtonRole.ActionRole)
         if self.total > 1:
             b.setToolTip(_('Move to next [%s]') % self.next_action.shortcut().toString(QKeySequence.SequenceFormat.NativeText))
             self.next_action.triggered.connect(b.click)
-        b.setIcon(QIcon(I('forward.png' if self.total > 1 else 'ok.png')))
+        b.setIcon(QIcon.ic('forward.png' if self.total > 1 else 'ok.png'))
         connect_lambda(b.clicked, self, lambda self: self.next_item(True))
         b.setDefault(True), b.setAutoDefault(True)
         self.bbh = h = QHBoxLayout()
@@ -690,9 +696,7 @@ class CompareMany(QDialog):
         width = max(700, min(950, geom.width()-50))
         height = max(650, min(1000, geom.height()-100))
         self.resize(QSize(width, height))
-        geom = gprefs.get('diff_dialog_geom', None)
-        if geom is not None:
-            QApplication.instance().safe_restore_geometry(self, geom)
+        self.restore_geometry(gprefs, 'diff_dialog_geom')
         b.setFocus(Qt.FocusReason.OtherFocusReason)
         self.next_called = False
 
@@ -708,7 +712,7 @@ class CompareMany(QDialog):
         self.action_button_action(self.ids[0])
 
     def accept(self):
-        gprefs.set('diff_dialog_geom', bytearray(self.saveGeometry()))
+        self.save_geometry(gprefs, 'diff_dialog_geom')
         self.compare_widget.save_comments_controls_state()
         super().accept()
 
@@ -720,7 +724,7 @@ class CompareMany(QDialog):
             'All reviewed changes will be lost! Are you sure you want to Cancel?'),
             'confirm-metadata-diff-dialog-cancel'):
             return
-        gprefs.set('diff_dialog_geom', bytearray(self.saveGeometry()))
+        self.save_geometry(gprefs, 'diff_dialog_geom')
         self.compare_widget.save_comments_controls_state()
         super().reject()
 
@@ -784,7 +788,9 @@ if __name__ == '__main__':
     ids = sorted(db.all_ids(), reverse=True)
     ids = tuple(zip(ids[0::2], ids[1::2]))
     gm = partial(db.get_metadata, index_is_id=True, get_cover=True, cover_as_data=True)
-    get_metadata = lambda x:list(map(gm, ids[x]))
+
+    def get_metadata(x):
+        return list(map(gm, ids[x]))
     d = CompareMany(list(range(len(ids))), get_metadata, db.field_metadata, db=db)
     d.exec()
     for changed, mi in itervalues(d.accepted):

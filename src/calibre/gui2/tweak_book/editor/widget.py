@@ -27,7 +27,7 @@ from calibre.gui2.tweak_book.editor import (
 )
 from calibre.gui2.tweak_book.editor.help import help_url
 from calibre.gui2.tweak_book.editor.text import TextEdit
-from calibre.utils.icu import utf16_length
+from calibre.utils.icu import utf16_length, primary_sort_key
 from polyglot.builtins import itervalues, string_or_bytes
 
 
@@ -127,7 +127,7 @@ def register_text_editor_actions(_reg, palette):
     for s in ('xml', 'html', 'css'):
         editor_toolbar_actions[s]['pretty-current'] = actions['pretty-current']
     editor_toolbar_actions['html']['change-paragraph'] = actions['change-paragraph'] = QAction(
-        QIcon(I('format-text-heading.png')), _('Change paragraph to heading'), ac.parent())
+        QIcon.ic('format-text-heading.png'), _('Change paragraph to heading'), ac.parent())
 
 
 class Editor(QMainWindow):
@@ -543,7 +543,7 @@ class Editor(QMainWindow):
             c.setPosition(orig_pos - utf16_length(word))
             found = False
             self.editor.setTextCursor(c)
-            if self.editor.find_spell_word([word], locale.langcode, center_on_cursor=False):
+            if locale and self.editor.find_spell_word([word], locale.langcode, center_on_cursor=False):
                 found = True
                 fc = self.editor.textCursor()
                 if fc.position() < c.position():
@@ -572,7 +572,7 @@ class Editor(QMainWindow):
                         ac = m.addAction(_('Add this word to the dictionary'))
                         dmenu = QMenu(m)
                         ac.setMenu(dmenu)
-                        for dic in dics:
+                        for dic in sorted(dics, key=lambda x: primary_sort_key(x.name)):
                             dmenu.addAction(dic.name, partial(self._nuke_word, dic.name, word, locale))
                 m.addSeparator()
 

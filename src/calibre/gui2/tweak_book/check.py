@@ -15,7 +15,7 @@ from calibre.ebooks.oeb.polish.check.base import WARN, INFO, DEBUG, ERROR, CRITI
 from calibre.ebooks.oeb.polish.check.main import run_checks, fix_errors
 from calibre.gui2 import NO_URL_FORMATTING, safe_open_url
 from calibre.gui2.tweak_book import tprefs
-from calibre.gui2.tweak_book.widgets import BusyCursor
+from calibre.gui2.widgets import BusyCursor
 
 
 def icon_for_level(level):
@@ -27,7 +27,7 @@ def icon_for_level(level):
         icon = 'dialog_information.png'
     else:
         icon = None
-    return QIcon(I(icon)) if icon else QIcon()
+    return QIcon.ic(icon) if icon else QIcon()
 
 
 def prefix_for_level(level):
@@ -43,6 +43,14 @@ def prefix_for_level(level):
         text += ': '
     return text
 
+def build_error_message(error, with_level=False, with_line_numbers=False):
+    prefix = ''
+    filename = error.name
+    if with_level:
+        prefix = prefix_for_level(error.level)
+    if with_line_numbers and error.line:
+        filename = f'{filename}:{error.line}'
+    return f'{prefix}{error.msg}\xa0\xa0\xa0\xa0[{filename}]'
 
 class Delegate(QStyledItemDelegate):
 
@@ -92,15 +100,15 @@ class Check(QSplitter):
     def context_menu(self, pos):
         m = QMenu(self)
         if self.items.count() > 0:
-            m.addAction(QIcon(I('edit-copy.png')), _('Copy list of errors to clipboard'), self.copy_to_clipboard)
+            m.addAction(QIcon.ic('edit-copy.png'), _('Copy list of errors to clipboard'), self.copy_to_clipboard)
         if list(m.actions()):
             m.exec(self.mapToGlobal(pos))
 
     def copy_to_clipboard(self):
         items = []
         for item in (self.items.item(i) for i in range(self.items.count())):
-            msg = str(item.text())
-            msg = prefix_for_level(item.data(Qt.ItemDataRole.UserRole).level) + msg
+            err = item.data(Qt.ItemDataRole.UserRole)
+            msg = build_error_message(err, with_level=True, with_line_numbers=True)
             items.append(msg)
         if items:
             QApplication.clipboard().setText('\n'.join(items))
@@ -214,7 +222,7 @@ class Check(QSplitter):
             self.hide_busy()
 
         for err in sorted(errors, key=lambda e:(100 - e.level, e.name)):
-            i = QListWidgetItem(f'{err.msg}\xa0\xa0\xa0\xa0[{err.name}]', self.items)
+            i = QListWidgetItem(build_error_message(err), self.items)
             i.setData(Qt.ItemDataRole.UserRole, err)
             i.setIcon(icon_for_level(err.level))
         if errors:

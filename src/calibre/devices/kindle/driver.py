@@ -2,13 +2,17 @@ __license__   = 'GPL v3'
 __copyright__ = '2009, John Schember <john at nachtimwald.com>'
 __docformat__ = 'restructuredtext en'
 
+from calibre.devices.kindle.apnx import APNXBuilder
+
 '''
 Device driver for Amazon's Kindle
 '''
 
-import datetime, os, re, json, hashlib, errno
+import os, re, json, hashlib, errno
 
 from calibre.constants import DEBUG, filesystem_encoding
+from calibre.utils.date import utcfromtimestamp
+from calibre.devices.interface import OpenPopupMessage
 from calibre.devices.kindle.bookmark import Bookmark
 from calibre.devices.usbms.driver import USBMS
 from calibre import strftime, fsync, prints
@@ -55,7 +59,7 @@ class KINDLE(USBMS):
 
     name           = 'Kindle Device Interface'
     gui_name       = 'Amazon Kindle'
-    icon           = I('devices/kindle.png')
+    icon           = 'devices/kindle.png'
     description    = _('Communicate with the Kindle e-book reader.')
     author         = 'John Schember'
     supported_platforms = ['windows', 'osx', 'linux']
@@ -95,6 +99,19 @@ class KINDLE(USBMS):
         ' Click "Show details" to see the list of books.'
     )
 
+    @classmethod
+    def get_open_popup_message(cls):
+        from calibre.utils.localization import localize_website_link
+        return OpenPopupMessage(title=_('WARNING: E-book covers'), message=_(
+            'Amazon has <b>broken display of covers</b> for books sent to the Kindle by USB cable. To workaround it,'
+            ' you have to either keep your Kindle in Airplane mode, or:'
+            '<ol><li>Send the books to the Kindle</li><li>Disconnect the Kindle and wait for the covers to be deleted'
+            ' by Amazon</li><li>Reconnect the Kindle and calibre will restore the covers.</li></ol> After this the'
+            ' covers for those books should stay put. <a href="{}">Click here</a> for details.').format(localize_website_link(
+                'https://manual.calibre-ebook.com/faq.html#covers-for-books-i'
+                '-send-to-my-e-ink-kindle-show-up-momentarily-and-then-are-replaced-by-a-generic-cover')
+        ))
+
     def is_allowed_book_file(self, filename, path, prefix):
         lpath = os.path.join(path, filename).partition(self.normalize_path(prefix))[2].replace('\\', '/')
         return '.sdr/' not in lpath
@@ -105,13 +122,13 @@ class KINDLE(USBMS):
             from calibre.ebooks.metadata.kfx import read_metadata_kfx
             try:
                 kfx_path = path
-                with lopen(kfx_path, 'rb') as f:
+                with open(kfx_path, 'rb') as f:
                     if f.read(8) != b'\xeaDRMION\xee':
                         f.seek(0)
                         mi = read_metadata_kfx(f)
                     else:
                         kfx_path = os.path.join(path.rpartition('.')[0] + '.sdr', 'assets', 'metadata.kfx')
-                        with lopen(kfx_path, 'rb') as mf:
+                        with open(kfx_path, 'rb') as mf:
                             mi = read_metadata_kfx(mf)
             except Exception:
                 import traceback
@@ -202,9 +219,9 @@ class KINDLE(USBMS):
 
         mc_path = get_my_clippings(storage, bookmarked_books)
         if mc_path:
-            timestamp = datetime.datetime.utcfromtimestamp(os.path.getmtime(mc_path))
+            timestamp = utcfromtimestamp(os.path.getmtime(mc_path))
             bookmarked_books['clippings'] = self.UserAnnotation(type='kindle_clippings',
-                                              value=dict(path=mc_path,timestamp=timestamp))
+                                              value=dict(path=mc_path, timestamp=timestamp))
 
         # This returns as job.result in gui2.ui.annotations_fetched(self,job)
         return bookmarked_books
@@ -213,7 +230,7 @@ class KINDLE(USBMS):
         from calibre.ebooks.BeautifulSoup import BeautifulSoup
         # Returns <div class="user_annotations"> ... </div>
         last_read_location = bookmark.last_read_location
-        timestamp = datetime.datetime.utcfromtimestamp(bookmark.timestamp)
+        timestamp = utcfromtimestamp(bookmark.timestamp)
         percent_read = bookmark.percent_read
 
         ka_soup = BeautifulSoup()
@@ -328,7 +345,7 @@ class KINDLE(USBMS):
 class KINDLE2(KINDLE):
 
     name           = 'Kindle 2/3/4/Touch/PaperWhite/Voyage Device Interface'
-    description    = _('Communicate with the Kindle 2/3/4/Touch/PaperWhite/Voyage e-book reader.')
+    description    = _('Communicate with the Kindle 2/3/4/Touch/Paperwhite/Voyage e-book reader.')
 
     FORMATS     = ['azw', 'mobi', 'azw3', 'prc', 'azw1', 'tpz', 'azw4', 'kfx', 'pobi', 'pdf', 'txt']
     DELETE_EXTS    = KINDLE.DELETE_EXTS + ['.mbp1', '.mbs', '.sdr', '.han']
@@ -395,7 +412,7 @@ class KINDLE2(KINDLE):
     OPT_APNX_CUST_COL        = 2
     OPT_APNX_METHOD_COL      = 3
     OPT_APNX_OVERWRITE       = 4
-    EXTRA_CUSTOMIZATION_CHOICES = {OPT_APNX_METHOD:{'fast', 'accurate', 'pagebreak'}}
+    EXTRA_CUSTOMIZATION_CHOICES = {OPT_APNX_METHOD: set(APNXBuilder.generators.keys())}
 
     # x330 on the PaperWhite
     # x262 on the Touch. Doesn't choke on x330, though.
@@ -427,7 +444,7 @@ class KINDLE2(KINDLE):
         return bl
 
     def kindle_update_booklist(self, bl, collections):
-        with lopen(collections, 'rb') as f:
+        with open(collections, 'rb') as f:
             collections = f.read()
         collections = json.loads(collections)
         path_map = {}
@@ -487,7 +504,7 @@ class KINDLE2(KINDLE):
         thumb_dir = self.amazon_system_thumbnails_dir()
         if not os.path.exists(thumb_dir):
             return
-        with lopen(filepath, 'rb') as f:
+        with open(filepath, 'rb') as f:
             is_kfx = f.read(4) == CONTAINER_MAGIC
             f.seek(0)
             uuid = cdetype = None
@@ -515,7 +532,7 @@ class KINDLE2(KINDLE):
 
         tp = self.thumbpath_from_filepath(filepath)
         if tp:
-            with lopen(tp, 'wb') as f:
+            with open(tp, 'wb') as f:
                 f.write(coverdata[2])
                 fsync(f)
             cache_dir = self.amazon_cover_bug_cache_dir()
@@ -523,7 +540,7 @@ class KINDLE2(KINDLE):
                 os.mkdir(cache_dir)
             except OSError:
                 pass
-            with lopen(os.path.join(cache_dir, os.path.basename(tp)), 'wb') as f:
+            with open(os.path.join(cache_dir, os.path.basename(tp)), 'wb') as f:
                 f.write(coverdata[2])
                 fsync(f)
 
@@ -550,7 +567,7 @@ class KINDLE2(KINDLE):
                 count += 1
                 if DEBUG:
                     prints('Restoring cover thumbnail:', name)
-                with lopen(os.path.join(src_dir, name), 'rb') as src, lopen(dest_path, 'wb') as dest:
+                with open(os.path.join(src_dir, name), 'rb') as src, open(dest_path, 'wb') as dest:
                     shutil.copyfileobj(src, dest)
                     fsync(dest)
         if DEBUG:

@@ -2,22 +2,23 @@
 # License: GPLv3 Copyright: 2015, Kovid Goyal <kovid at kovidgoyal.net>
 
 
+import os
+import stat
 from functools import partial
-from threading import Thread, Event
-import os, stat
-
 from qt.core import (
-    QSize, QStackedLayout, QWidget, QVBoxLayout, QLabel, QPushButton,
-    QListWidget, QListWidgetItem, QIcon, Qt, pyqtSignal, QGridLayout,
-    QProgressBar, QDialog, QDialogButtonBox, QScrollArea, QLineEdit, QFrame, QAbstractItemView
+    QAbstractItemView, QDialog, QDialogButtonBox, QFrame, QGridLayout, QIcon, QLabel,
+    QLineEdit, QListWidget, QListWidgetItem, QProgressBar, QPushButton, QScrollArea,
+    QSize, QStackedLayout, Qt, QVBoxLayout, QWidget, pyqtSignal,
 )
+from threading import Event, Thread
 
-from calibre import human_readable, as_unicode
+from calibre import as_unicode, human_readable
 from calibre.constants import iswindows
 from calibre.db.legacy import LibraryDatabase
 from calibre.gui2 import choose_dir, error_dialog, question_dialog
 from calibre.gui2.widgets2 import Dialog
-from calibre.utils.exim import all_known_libraries, export, Importer, import_data
+from calibre.startup import connect_lambda
+from calibre.utils.exim import Importer, all_known_libraries, export, import_data
 from calibre.utils.icu import numeric_sort_key
 
 
@@ -52,7 +53,7 @@ class ImportLocation(QWidget):
         self.le = le = QLineEdit(self)
         le.setPlaceholderText(_('Location to import this library to'))
         l.addWidget(le, 1, 0)
-        self.b = b = QPushButton(QIcon(I('document_open.png')), _('Select &folder'), self)
+        self.b = b = QPushButton(QIcon.ic('document_open.png'), _('Select &folder'), self)
         b.clicked.connect(self.select_folder)
         l.addWidget(b, 1, 1)
         self.lpath = lpath
@@ -75,7 +76,7 @@ class RunAction(QDialog):
 
     def __init__(self, title, err_msg, action, parent=None):
         QDialog.__init__(self, parent)
-        self.setWindowTitle(_('Working please wait...'))
+        self.setWindowTitle(_('Working, please wait...'))
         self.title, self.action, self.tb, self.err_msg = title, action, None, err_msg
         self.abort = Event()
         self.setup_ui()
@@ -206,7 +207,7 @@ class EximDialog(Dialog):
             i = QListWidgetItem(self.export_lib_text(lpath), ll)
             i.setData(Qt.ItemDataRole.UserRole, lpath)
             i.setData(Qt.ItemDataRole.UserRole+1, lpaths[lpath])
-            i.setIcon(QIcon(I('lt.png')))
+            i.setIcon(QIcon.ic('lt.png'))
             i.setSelected(True)
         self.update_disk_usage.connect((
             lambda i, sz: self.lib_list.item(i).setText(self.export_lib_text(
@@ -233,7 +234,7 @@ class EximDialog(Dialog):
                              ' wish to import.'))
         la.setWordWrap(True)
         l.addWidget(la)
-        self.export_dir_button = b = QPushButton(QIcon(I('document_open.png')), _('Choose &folder'), self)
+        self.export_dir_button = b = QPushButton(QIcon.ic('document_open.png'), _('Choose &folder'), self)
         b.clicked.connect(self.select_import_folder)
         l.addWidget(b), l.addStretch()
 

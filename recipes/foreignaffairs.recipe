@@ -6,13 +6,7 @@ import html5lib
 import mechanize
 from lxml import html
 
-from calibre.web.feeds.news import BasicNewsRecipe
-
-
-def classes(classes):
-    q = frozenset(classes.split(' '))
-    return dict(attrs={
-        'class': lambda x: x and frozenset(x.split()).intersection(q)})
+from calibre.web.feeds.news import BasicNewsRecipe, classes
 
 
 def as_article(source, log):
@@ -72,15 +66,6 @@ def get_issue_data(br, log, node_id='1126213', year='2020', volnum='99', issue_v
         return data['hits']['hits']
 
     feeds = []
-    issue_data = get_data(make_query(
-        fa_node_type_or_subtype='Issue',
-        field_issue_volume=issue_vol, field_issue_year=year,
-        field_issue_volume_number=volnum
-    ))[0]['_source']
-    main_sec_title = issue_data['title'][0]
-    main_sec_nids = issue_data['field_issue_sspecial_articles__nid']
-    articles_data = get_data(make_query(nid=main_sec_nids, filter=True, size=len(main_sec_nids)))
-    articles = []
 
     def as_article(source):
         title = source['title'][0]
@@ -94,12 +79,23 @@ def get_issue_data(br, log, node_id='1126213', year='2020', volnum='99', issue_v
         url = 'https://www.foreignaffairs.com' + source['path'][0]
         return {'title': title, 'description': desc, 'url': url}
 
-    log(main_sec_title)
-    for entry in articles_data:
-        source = entry['_source']
-        articles.append(as_article(source))
-        log('\t', articles[-1]['title'], articles[-1]['url'])
-    feeds.append((main_sec_title, articles))
+    issue_data = get_data(make_query(
+        fa_node_type_or_subtype='Issue',
+        field_issue_volume=issue_vol, field_issue_year=year,
+        field_issue_volume_number=volnum
+    ))[0]['_source']
+
+    if 'field_issue_sspecial_articles__nid' in issue_data:
+        main_sec_title = issue_data['title'][0]
+        main_sec_nids = issue_data['field_issue_sspecial_articles__nid']
+        articles_data = get_data(make_query(nid=main_sec_nids, filter=True, size=len(main_sec_nids)))
+        articles = []
+        log(main_sec_title)
+        for entry in articles_data:
+            source = entry['_source']
+            articles.append(as_article(source))
+            log('\t', articles[-1]['title'], articles[-1]['url'])
+        feeds.append((main_sec_title, articles))
 
     articles_data = get_data(make_query(field_issue__nid=node_id, size=50))
     ans = {}
@@ -141,6 +137,8 @@ class ForeignAffairsRecipe(BasicNewsRecipe):
 
     conversion_options = {'comments': description, 'tags': category, 'language': 'en',
                           'publisher': publisher}
+    ignore_duplicate_articles = {'title', 'url'}
+    remove_empty_feeds = True
 
     def parse_index(self):
         soup = self.index_to_soup(self.INDEX)
@@ -151,10 +149,14 @@ class ForeignAffairsRecipe(BasicNewsRecipe):
         self.timefmt = u' [%s]' % date
         link = soup.find('link', rel='canonical', href=True)['href']
         year, volnum, issue_vol = link.split('/')[-3:]
-        self.cover_url = soup.find(**classes('subscribe-callout-image'))['data-src'].split("|")[-1]
-        self.cover_url = self.cover_url.split('?')[0]
-        self.cover_url = self.cover_url.replace('.webp', '')
-        self.cover_url = self.cover_url.replace('_webp_issue_small_2x', 'issue_large_2x')
+        self.cover_url = re.sub(
+            r"_webp_issue_small_\dx",
+            "_webp_issue_large_2x",
+            soup.find(class_="subscribe-callout-image")["srcset"]
+            .split(",")[0]
+            .strip()
+            .split(" ")[0],
+        )
 
         cls = soup.find('body')['class']
         if isinstance(cls, (list, tuple)):
@@ -178,9 +180,8 @@ class ForeignAffairsRecipe(BasicNewsRecipe):
         return html.tostring(root, encoding='unicode')
 
     def preprocess_html(self, soup):
-        for attr in ('ng-src', 'data-blazy', 'data-src'):
-            for img in soup.findAll('img', attrs={attr: True}):
-                img['src'] = img[attr]
+        for img in soup.find_all('img', attrs={'srcset': True}):
+            img['src'] = img['srcset'].split(',')[-1].strip().split(' ')[0].strip()
         return soup
 
     def get_browser(self):

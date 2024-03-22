@@ -6,7 +6,7 @@ __copyright__ = '2008, Kovid Goyal kovid@kovidgoyal.net'
 __docformat__ = 'restructuredtext en'
 
 from qt.core import (
-    QDialog, Qt, QIcon, QVBoxLayout, QHBoxLayout, QLabel, QCheckBox, QDialogButtonBox
+    QCheckBox, QDialog, QDialogButtonBox, QHBoxLayout, QIcon, QLabel, Qt, QVBoxLayout,
 )
 
 from calibre import confirm_config_name
@@ -20,17 +20,18 @@ class Dialog(QDialog):
                  title=None, confirm_msg=None, show_cancel_button=True, extra_button=None):
         QDialog.__init__(self, parent)
         self.setWindowTitle(title or _("Are you sure?"))
-        self.setWindowIcon(QIcon(I(icon)))
+        self.setWindowIcon(QIcon.ic(icon))
         self.l = l = QVBoxLayout(self)
         self.h = h = QHBoxLayout()
         l.addLayout(h)
 
         self.icon_widget = Icon(self)
-        self.icon_widget.set_icon(QIcon(I(icon)))
+        self.icon_widget.set_icon(QIcon.ic(icon))
 
         self.msg = m = QLabel(self)
         m.setOpenExternalLinks(True)
         m.setMinimumWidth(350), m.setWordWrap(True), m.setObjectName("msg")
+        m.setMaximumHeight(400)
         m.setText(msg)
 
         h.addWidget(self.icon_widget), h.addSpacing(10), h.addWidget(m)

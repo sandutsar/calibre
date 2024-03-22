@@ -39,8 +39,8 @@ class ResultsView(QTreeView):
     download_requested = pyqtSignal(object)
     open_requested = pyqtSignal(object)
 
-    def __init__(self, *args):
-        QTreeView.__init__(self,*args)
+    def __init__(self, *args, **kwargs):
+        QTreeView.__init__(self,*args, **kwargs)
 
         self._model = Matches()
         self.setModel(self._model)
@@ -66,5 +66,5 @@ class ResultsView(QTreeView):
         if not result.downloads:
             da.setEnabled(False)
         menu.addSeparator()
-        menu.addAction(_('Goto in store...'), partial(self.open_requested.emit, result))
+        menu.addAction(_('Show in store'), partial(self.open_requested.emit, result))
         menu.exec(event.globalPos())

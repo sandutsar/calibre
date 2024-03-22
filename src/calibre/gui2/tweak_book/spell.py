@@ -10,41 +10,44 @@ from collections import OrderedDict, defaultdict
 from functools import partial
 from itertools import chain
 from qt.core import (
-    QT_VERSION_STR, QAbstractTableModel, QApplication, QCheckBox, QComboBox, QDialog,
-    QDialogButtonBox, QFont, QFormLayout, QGridLayout, QHBoxLayout, QIcon,
-    QInputDialog, QKeySequence, QLabel, QLineEdit, QListWidget, QListWidgetItem,
-    QMenu, QModelIndex, QPlainTextEdit, QPushButton, QSize, QStackedLayout, Qt,
-    QTableView, QTimer, QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
-    QWidget, pyqtSignal, QAbstractItemView
+    QT_VERSION_STR, QAbstractItemView, QAbstractTableModel, QAction, QApplication,
+    QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFont, QFormLayout, QGridLayout,
+    QHBoxLayout, QIcon, QInputDialog, QKeySequence, QLabel, QLineEdit, QListWidget,
+    QListWidgetItem, QMenu, QModelIndex, QPlainTextEdit, QPushButton, QSize,
+    QStackedLayout, Qt, QTableView, QTabWidget, QTimer, QToolButton, QTreeWidget,
+    QTreeWidgetItem, QVBoxLayout, QWidget, pyqtSignal,
 )
 from threading import Thread
 
 from calibre.constants import __appname__
-from calibre.ebooks.oeb.base import OEB_DOCS, NCX_MIME, OPF_MIME
+from calibre.ebooks.oeb.base import NCX_MIME, OEB_DOCS, OPF_MIME
 from calibre.ebooks.oeb.polish.spell import (
     get_all_words, get_checkable_file_names, merge_locations, replace_word,
-    undo_replace_word
+    undo_replace_word,
 )
 from calibre.gui2 import choose_files, error_dialog
 from calibre.gui2.complete2 import LineEdit
 from calibre.gui2.languages import LanguagesEdit
 from calibre.gui2.progress_indicator import ProgressIndicator
 from calibre.gui2.tweak_book import (
-    current_container, dictionaries, editors, set_book_locale, tprefs
+    current_container, dictionaries, editors, set_book_locale, tprefs,
 )
 from calibre.gui2.tweak_book.widgets import Dialog
+from calibre.gui2.widgets import BusyCursor
 from calibre.gui2.widgets2 import FlowLayout
 from calibre.spell import DictionaryLocale
 from calibre.spell.break_iterator import split_into_words
 from calibre.spell.dictionary import (
-    best_locale_for_language, builtin_dictionaries, custom_dictionaries, dprefs,
-    get_dictionary, remove_dictionary, rename_dictionary
+    best_locale_for_language, builtin_dictionaries, catalog_online_dictionaries,
+    custom_dictionaries, dprefs, get_dictionary, remove_dictionary, rename_dictionary,
 )
-from calibre.spell.import_from import import_from_oxt
+from calibre.spell.import_from import import_from_online, import_from_oxt
+from calibre.startup import connect_lambda
 from calibre.utils.icu import contains, primary_contains, primary_sort_key, sort_key
 from calibre.utils.localization import (
-    calibre_langcode_to_name, canonicalize_lang, get_lang, get_language
+    calibre_langcode_to_name, canonicalize_lang, get_lang, get_language,
 )
+from calibre.utils.resources import get_path as P
 from calibre_extensions.progress_indicator import set_no_activate_on_click
 from polyglot.builtins import iteritems
 
@@ -62,34 +65,91 @@ def country_map():
         _country_map = msgpack_loads(P('localization/iso3166.calibre_msgpack', data=True, allow_user_override=False))
     return _country_map
 
+def current_languages_dictionaries(reread=False):
+    all_dictionaries = builtin_dictionaries() | custom_dictionaries(reread=reread)
+    languages = defaultdict(lambda : defaultdict(set))
+    for d in all_dictionaries:
+        for locale in d.locales | {d.primary_locale}:
+            languages[locale.langcode][locale.countrycode].add(d)
+    return languages
 
 class AddDictionary(QDialog):  # {{{
 
     def __init__(self, parent=None):
         QDialog.__init__(self, parent)
         self.setWindowTitle(_('Add a dictionary'))
-        self.l = l = QFormLayout(self)
-        l.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        l = QVBoxLayout(self)
         self.setLayout(l)
 
-        self.la = la = QLabel('<p>' + _(
-        '''{0} supports the use of LibreOffice dictionaries for spell checking. You can
-            download more dictionaries from <a href="{1}">the LibreOffice extensions repository</a>.
-            The dictionary will download as an .oxt file. Simply specify the path to the
-            downloaded .oxt file here to add the dictionary to {0}.''').format(
-                __appname__, 'https://extensions.libreoffice.org/extension-center?getCategories=Dictionary&getCompatibility=any&sort_on=positive_ratings')+'<p>')  # noqa
+        self.tabs = tabs = QTabWidget(self)
+        l.addWidget(self.tabs)
+
+        self.bb = bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        l.addWidget(bb)
+
+        self.web_download = QWidget(self)
+        self.oxt_import = QWidget(self)
+        tabs.setTabIcon(tabs.addTab(self.web_download, _('&Download')), QIcon.ic('download-metadata.png'))
+        tabs.setTabIcon(tabs.addTab(self.oxt_import, _('&Import from OXT file')), QIcon.ic('unpack-book.png'))
+        tabs.currentChanged.connect(self.tab_changed)
+
+        # Download online tab
+        l = QFormLayout(self.web_download)
+        l.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        self.web_download.setLayout(l)
+
+        la = QLabel('<p>' + _(
+        '''{0} supports the use of LibreOffice dictionaries for spell checking. Choose the language you
+        want below and click OK to download the dictionary from the <a href="{1}">LibreOffice dictionaries repository</a>.'''
+            ).format(__appname__, 'https://github.com/LibreOffice/dictionaries')+'<p>')
         la.setWordWrap(True)
         la.setOpenExternalLinks(True)
         la.setMinimumWidth(450)
         l.addRow(la)
 
-        self.h = h = QHBoxLayout()
+        self.combobox_online = c = QComboBox(self)
+        l.addRow(_('&Language to download:'), c)
+
+        c.addItem('', None)
+        languages = current_languages_dictionaries(reread=False)
+
+        def k(dictionary):
+            return sort_key(calibre_langcode_to_name(dictionary['primary_locale'].langcode))
+
+        for data in sorted(catalog_online_dictionaries(), key=lambda x:k(x)):
+            if languages.get(data['primary_locale'].langcode, {}).get(data['primary_locale'].countrycode, None):
+                continue
+            local = calibre_langcode_to_name(data['primary_locale'].langcode)
+            country = country_map()['names'].get(data['primary_locale'].countrycode, None)
+            text = f'{local} ({country})' if country else local
+            data['text'] = text
+            c.addItem(text, data)
+
+        # Oxt import tab
+        l = QFormLayout(self.oxt_import)
+        l.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        self.oxt_import.setLayout(l)
+
+        la = QLabel('<p>' + _(
+        '''{0} supports the use of LibreOffice dictionaries for spell checking. You can
+            download more dictionaries from <a href="{1}">the LibreOffice extensions repository</a>.
+            The dictionary will download as an .oxt file. Simply specify the path to the
+            downloaded .oxt file here to add the dictionary to {0}.''').format(
+                __appname__, 'https://extensions.libreoffice.org/?Tags%5B%5D=50')+'<p>')  # noqa
+        la.setWordWrap(True)
+        la.setOpenExternalLinks(True)
+        la.setMinimumWidth(450)
+        l.addRow(la)
+
+        h = QHBoxLayout()
         self.path = p = QLineEdit(self)
         p.setPlaceholderText(_('Path to OXT file'))
         h.addWidget(p)
 
-        self.b = b = QToolButton(self)
-        b.setIcon(QIcon(I('document_open.png')))
+        self.button_open_oxt = b = QToolButton(self)
+        b.setIcon(QIcon.ic('document_open.png'))
         b.setToolTip(_('Browse for an OXT file'))
         b.clicked.connect(self.choose_file)
         h.addWidget(b)
@@ -100,11 +160,11 @@ class AddDictionary(QDialog):  # {{{
         n.setPlaceholderText(_('Choose a nickname for this dictionary'))
         l.addRow(_('&Nickname:'), n)
 
-        self.bb = bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel)
-        bb.accepted.connect(self.accept)
-        bb.rejected.connect(self.reject)
-        l.addRow(bb)
-        b.setFocus(Qt.FocusReason.OtherFocusReason)
+    def tab_changed(self, idx):
+        if idx == 0:
+            self.combobox_online.setFocus(Qt.FocusReason.OtherFocusReason)
+        elif idx == 1:
+            self.button_open_oxt.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def choose_file(self):
         path = choose_files(self, 'choose-dict-for-import', _('Choose OXT Dictionary'), filters=[
@@ -119,7 +179,7 @@ class AddDictionary(QDialog):  # {{{
     def nickname(self):
         return str(self.nick.text()).strip()
 
-    def accept(self):
+    def _process_oxt_import(self):
         nick = self.nickname
         if not nick:
             return error_dialog(self, _('Must specify nickname'), _(
@@ -138,6 +198,32 @@ class AddDictionary(QDialog):  # {{{
         if num == 0:
             return error_dialog(self, _('No dictionaries'), _(
                 'No dictionaries were found in %s') % oxt, show=True)
+
+    def _process_online_download(self):
+        data = self.combobox_online.currentData()
+        nick = 'online-'+data['name']
+        directory = data['directory']
+        if nick in {d.name for d in custom_dictionaries()}:
+            return error_dialog(self, _('Nickname already used'), _(
+                'A dictionary with the nick name "%s" already exists.') % nick, show=True)
+        try:
+            num = import_from_online(directory, nick)
+        except:
+            import traceback
+            return error_dialog(self, _('Failed to download dictionaries'), _(
+                'Failed to download dictionaries for "{:s}". Click "Show details" for more information').format(data['text']),
+                                det_msg=traceback.format_exc(), show=True)
+        if num == 0:
+            return error_dialog(self, _('No dictionaries'), _(
+                'No dictionary was found for "{:s}"').format(data['text']), show=True)
+
+    def accept(self):
+        idx = self.tabs.currentIndex()
+        if idx == 0:
+            with BusyCursor():
+                self._process_online_download()
+        elif idx == 1:
+            self._process_oxt_import()
         QDialog.accept(self)
 # }}}
 
@@ -188,7 +274,7 @@ class ManageUserDictionaries(Dialog):
         l.addWidget(self.bb)
         self.bb.clear(), self.bb.addButton(QDialogButtonBox.StandardButton.Close)
         b = self.bb.addButton(_('&New dictionary'), QDialogButtonBox.ButtonRole.ActionRole)
-        b.setIcon(QIcon(I('spell-check.png')))
+        b.setIcon(QIcon.ic('spell-check.png'))
         b.clicked.connect(self.new_dictionary)
 
         self.dictionaries = d = QListWidget(self)
@@ -201,10 +287,10 @@ class ManageUserDictionaries(Dialog):
         l = QVBoxLayout()
         h.addLayout(l)
         h = QHBoxLayout()
-        self.remove_button = b = QPushButton(QIcon(I('trash.png')), _('&Remove dictionary'), self)
+        self.remove_button = b = QPushButton(QIcon.ic('trash.png'), _('&Remove dictionary'), self)
         b.clicked.connect(self.remove_dictionary)
         h.addWidget(b)
-        self.rename_button = b = QPushButton(QIcon(I('modified.png')), _('Re&name dictionary'), self)
+        self.rename_button = b = QPushButton(QIcon.ic('modified.png'), _('Re&name dictionary'), self)
         b.clicked.connect(self.rename_dictionary)
         h.addWidget(b)
         self.dlabel = la = QLabel('')
@@ -220,13 +306,13 @@ class ManageUserDictionaries(Dialog):
         l.addWidget(w)
         self.add_word_button = b = QPushButton(_('&Add word'), self)
         b.clicked.connect(self.add_word)
-        b.setIcon(QIcon(I('plus.png')))
+        b.setIcon(QIcon.ic('plus.png'))
         l.h = h = QHBoxLayout()
         l.addLayout(h)
         h.addWidget(b)
         self.remove_word_button = b = QPushButton(_('&Remove selected words'), self)
         b.clicked.connect(self.remove_word)
-        b.setIcon(QIcon(I('minus.png')))
+        b.setIcon(QIcon.ic('minus.png'))
         h.addWidget(b)
         self.import_words_button = b = QPushButton(_('&Import list of words'), self)
         b.clicked.connect(self.import_words)
@@ -455,14 +541,14 @@ class ManageDictionaries(Dialog):  # {{{
         self.bb.clear()
         self.bb.addButton(QDialogButtonBox.StandardButton.Close)
         b = self.bb.addButton(_('Manage &user dictionaries'), QDialogButtonBox.ButtonRole.ActionRole)
-        b.setIcon(QIcon(I('user_profile.png')))
+        b.setIcon(QIcon.ic('user_profile.png'))
         b.setToolTip(_(
             'Manage the list of user dictionaries (dictionaries to which you can add words)'))
         b.clicked.connect(self.manage_user_dictionaries)
         b = self.bb.addButton(_('&Add dictionary'), QDialogButtonBox.ButtonRole.ActionRole)
         b.setToolTip(_(
             'Add a new dictionary that you downloaded from the internet'))
-        b.setIcon(QIcon(I('plus.png')))
+        b.setIcon(QIcon.ic('plus.png'))
         b.clicked.connect(self.add_dictionary)
         l.addWidget(self.bb, l.rowCount(), 0, 1, l.columnCount())
 
@@ -479,11 +565,7 @@ class ManageDictionaries(Dialog):  # {{{
                 rename_dictionary(d, str(item.text(0)))
 
     def build_dictionaries(self, reread=False):
-        all_dictionaries = builtin_dictionaries() | custom_dictionaries(reread=reread)
-        languages = defaultdict(lambda : defaultdict(set))
-        for d in all_dictionaries:
-            for locale in d.locales | {d.primary_locale}:
-                languages[locale.langcode][locale.countrycode].add(d)
+        languages = current_languages_dictionaries(reread=reread)
         bf = QFont(self.dictionaries.font())
         bf.setBold(True)
         itf = QFont(self.dictionaries.font())
@@ -644,9 +726,9 @@ class WordsModel(QAbstractTableModel):
                 except IndexError:
                     pass
             elif role == Qt.ItemDataRole.InitialSortOrderRole:
-                return Qt.SortOrder.DescendingOrder if section == 1 else Qt.SortOrder.AscendingOrder
+                return (Qt.SortOrder.DescendingOrder if section == 1 else Qt.SortOrder.AscendingOrder).value  # https://bugreports.qt.io/browse/PYSIDE-1974
             elif role == Qt.ItemDataRole.TextAlignmentRole:
-                return Qt.AlignVCenter | self.alignments[section]
+                return int(Qt.AlignmentFlag.AlignVCenter | self.alignments[section])  # https://bugreports.qt.io/browse/PYSIDE-1974
 
     def misspelled_text(self, w):
         if self.spell_map[w]:
@@ -673,7 +755,7 @@ class WordsModel(QAbstractTableModel):
             if col == 3:
                 return self.misspelled_text((word, locale))
         if role == Qt.ItemDataRole.TextAlignmentRole:
-            return Qt.AlignmentFlag.AlignVCenter | self.alignments[index.column()]
+            return int(Qt.AlignmentFlag.AlignVCenter | self.alignments[index.column()])  # https://bugreports.qt.io/browse/PYSIDE-1974
 
     def sort(self, column, order=Qt.SortOrder.AscendingOrder):
         reverse = order != Qt.SortOrder.AscendingOrder
@@ -854,6 +936,19 @@ class WordsView(QTableView):
         self.setTabKeyNavigation(False)
         self.verticalHeader().close()
 
+    def change_current_word_by(self, delta=1):
+        rc = self.model().rowCount()
+        if rc > 0:
+            row = self.currentIndex().row()
+            row = (row + delta + rc) % rc
+            self.highlight_row(row)
+
+    def next_word(self):
+        self.change_current_word_by(1)
+
+    def previous_word(self):
+        self.change_current_word_by(-1)
+
     def keyPressEvent(self, ev):
         if ev == QKeySequence.StandardKey.Copy:
             self.copy_to_clipboard()
@@ -948,6 +1043,17 @@ class ManageExcludedFiles(Dialog):
         return {item.text() for item in self.files.selectedItems()}
 
 
+class SuggestedList(QListWidget):
+
+    def next_word(self):
+        row = (self.currentRow() + 1) % self.count()
+        self.setCurrentRow(row)
+
+    def previous_word(self):
+        row = (self.currentRow() - 1 + self.count()) % self.count()
+        self.setCurrentRow(row)
+
+
 class SpellCheck(Dialog):
 
     work_finished = pyqtSignal(object, object, object)
@@ -973,7 +1079,7 @@ class SpellCheck(Dialog):
 
     def setup_ui(self):
         self.state_name = 'spell-check-table-state-' + QT_VERSION_STR.partition('.')[0]
-        self.setWindowIcon(QIcon(I('spell-check.png')))
+        self.setWindowIcon(QIcon.ic('spell-check.png'))
         self.l = l = QVBoxLayout(self)
         self.setLayout(l)
         self.stack = s = QStackedLayout()
@@ -983,15 +1089,15 @@ class SpellCheck(Dialog):
         self.bb.addButton(QDialogButtonBox.StandardButton.Close)
         b = self.bb.addButton(_('&Refresh'), QDialogButtonBox.ButtonRole.ActionRole)
         b.setToolTip('<p>' + _('Re-scan the book for words, useful if you have edited the book since opening this dialog'))
-        b.setIcon(QIcon(I('view-refresh.png')))
+        b.setIcon(QIcon.ic('view-refresh.png'))
         connect_lambda(b.clicked, self, lambda self: self.refresh(change_request=None))
         b = self.bb.addButton(_('&Undo last change'), QDialogButtonBox.ButtonRole.ActionRole)
         b.setToolTip('<p>' + _('Undo the last spell check word replacement, if any'))
-        b.setIcon(QIcon(I('edit-undo.png')))
+        b.setIcon(QIcon.ic('edit-undo.png'))
         b.clicked.connect(self.undo_last_change)
         b = self.exclude_button = self.bb.addButton('', QDialogButtonBox.ButtonRole.ActionRole)
         b.setToolTip('<p>' + _('Exclude some files in the book from spell check'))
-        b.setIcon(QIcon(I('chapters.png')))
+        b.setIcon(QIcon.ic('chapters.png'))
         b.clicked.connect(self.change_excluded_files)
         self.update_exclude_button()
 
@@ -1076,7 +1182,7 @@ class SpellCheck(Dialog):
         sw.setPlaceholderText(_('The replacement word'))
         sw.returnPressed.connect(self.change_word)
         l.addWidget(sw)
-        self.suggested_list = sl = QListWidget(self)
+        self.suggested_list = sl = SuggestedList(self)
         sl.currentItemChanged.connect(self.current_suggestion_changed)
         sl.itemActivated.connect(self.change_word)
         set_no_activate_on_click(sl)
@@ -1097,6 +1203,33 @@ class SpellCheck(Dialog):
         self.hb = h = FlowLayout()
         self.summary = s = QLabel('')
         self.main.l.addLayout(h), h.addWidget(s), h.addWidget(om), h.addWidget(cs), h.addWidget(cs2)
+        self.action_next_word = a = QAction(self)
+        a.setShortcut(QKeySequence(Qt.Key.Key_Down))
+        a.triggered.connect(self.next_word)
+        self.addAction(a)
+        self.action_previous_word = a = QAction(self)
+        a.triggered.connect(self.previous_word)
+        a.setShortcut(QKeySequence(Qt.Key.Key_Up))
+        self.addAction(a)
+
+        def button_action(sc, tt, button):
+            a = QAction(self)
+            self.addAction(a)
+            a.setShortcut(QKeySequence(sc, QKeySequence.SequenceFormat.PortableText))
+            button.setToolTip(tt + f' [{a.shortcut().toString(QKeySequence.SequenceFormat.NativeText)}]')
+            a.triggered.connect(button.click)
+            return a
+
+        self.action_change_word = button_action('ctrl+right', _('Change all occurrences of this word'), self.change_button)
+        self.action_show_next_occurrence = button_action('alt+right', _('Show next occurrence of this word in the book'), self.next_occurrence)
+
+    def next_word(self):
+        v = self.suggested_list if self.focusWidget() is self.suggested_list else self.words_view
+        v.next_word()
+
+    def previous_word(self):
+        v = self.suggested_list if self.focusWidget() is self.suggested_list else self.words_view
+        v.previous_word()
 
     def keyPressEvent(self, ev):
         if ev.key() in (Qt.Key.Key_Enter, Qt.Key.Key_Return):
@@ -1145,13 +1278,12 @@ class SpellCheck(Dialog):
         self.find_word.emit(w, self.words_model.words[w])
 
     def initialize_user_dictionaries(self):
-        ct = str(self.user_dictionaries.currentText())
+        ct = str(self.user_dictionaries.currentText()) or _('Default')
         self.user_dictionaries.clear()
-        self.user_dictionaries.addItems([d.name for d in dictionaries.active_user_dictionaries])
-        if ct:
-            idx = self.user_dictionaries.findText(ct)
-            if idx > -1:
-                self.user_dictionaries.setCurrentIndex(idx)
+        self.user_dictionaries.addItems(sorted((d.name for d in dictionaries.active_user_dictionaries), key=primary_sort_key))
+        idx = self.user_dictionaries.findText(ct)
+        if idx > -1:
+            self.user_dictionaries.setCurrentIndex(idx)
         self.user_dictionaries.setVisible(self.user_dictionaries.count() > 0)
         self.user_dictionaries_missing_label.setVisible(not self.user_dictionaries.isVisible())
 
@@ -1234,6 +1366,7 @@ class SpellCheck(Dialog):
         self.change_requested.emit(w, new_word)
 
     def do_change_word(self, w, new_word):
+        current_row = self.words_view.currentIndex().row()
         self.undo_cache.clear()
         changed_files = replace_word(current_container(), new_word, self.words_model.words[w], w[1], undo_cache=self.undo_cache)
         if changed_files:
@@ -1242,6 +1375,8 @@ class SpellCheck(Dialog):
             row = self.words_model.row_for_word(w)
             if row == -1:
                 row = self.words_view.currentIndex().row()
+                if row < self.words_model.rowCount() - 1 and current_row > 0:
+                    row += 1
             if row > -1:
                 self.words_view.highlight_row(row)
 
@@ -1470,7 +1605,8 @@ def find_next_error(current_editor, current_editor_name, gui_parent, show_editor
 
 
 if __name__ == '__main__':
-    app = QApplication([])
+    from calibre.gui2 import Application
+    app = Application([])
     dictionaries.initialize()
-    ManageUserDictionaries.test()
+    ManageDictionaries.test()
     del app

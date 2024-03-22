@@ -334,9 +334,11 @@ class Tester(SearchQueryParser):
         if location in self.fields.keys():
             getter = operator.itemgetter(self.fields[location])
         elif location == 'all':
-            getter = lambda y: ''.join(x if x else '' for x in y)
+            def getter(y):
+                return ''.join(x if x else '' for x in y)
         else:
-            getter = lambda x: ''
+            def getter(x):
+                return ''
 
         if not query:
             return set()
@@ -386,6 +388,15 @@ class TestSQP(unittest.TestCase):
         t('"a \\" () b"', 'Q', 'a " () b')
         t('"a“b"', 'Q', 'a“b')
         t('"a”b"', 'Q', 'a”b')
+        # docstring tests
+        t(r'"""a\1b"""', 'W', r'a\1b')
+        t(r'("""a\1b""" AND """c""" OR d)',
+          'O', '(', 'W', r'a\1b', 'W', 'AND', 'W', 'c',  'W', 'OR', 'W', 'd', 'O', ')')
+        t(r'template:="""a\1b"""', 'W', r'template:=a\1b')
+        t('template:="""a\nb"""', 'W', 'template:=a\nb')
+        t(r'template:"""=a\1b"""', 'W', r'template:=a\1b')
+        t(r'template:"""program: return ("\"1\"")#@#n:1"""', 'W',
+          r'template:program: return ("\"1\"")#@#n:1')
 
 
 def find_tests():

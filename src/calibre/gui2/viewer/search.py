@@ -6,17 +6,21 @@ import regex
 from collections import Counter, OrderedDict
 from html import escape
 from qt.core import (
-    QCheckBox, QComboBox, QFont, QHBoxLayout, QIcon, QLabel, Qt, QToolButton,
-    QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget, pyqtSignal
+    QAbstractItemView, QCheckBox, QComboBox, QFont, QHBoxLayout, QIcon, QLabel, QMenu,
+    Qt, QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget, pyqtSignal,
 )
 from threading import Thread
 
 from calibre.ebooks.conversion.search_replace import REGEX_FLAGS
 from calibre.gui2 import warning_dialog
+from calibre.gui2.gestures import GestureManager
 from calibre.gui2.progress_indicator import ProgressIndicator
+from calibre.gui2.viewer import get_boss
 from calibre.gui2.viewer.config import vprefs
 from calibre.gui2.viewer.web_view import get_data, get_manifest
 from calibre.gui2.viewer.widgets import ResultsDelegate, SearchBox
+from calibre.utils.icu import primary_collator_without_punctuation
+from calibre.utils.localization import _, ngettext
 from polyglot.builtins import iteritems
 from polyglot.functools import lru_cache
 from polyglot.queue import Queue
@@ -80,13 +84,26 @@ def text_to_regex(text):
     return ''.join(ans)
 
 
+def words_and_interval_for_near(expr, default_interval=60):
+    parts = expr.split()
+    words = []
+    interval = default_interval
+
+    for q in parts:
+        if q is parts[-1] and q.isdigit():
+            interval = int(q)
+        else:
+            words.append(text_to_regex(q))
+    return words, interval
+
+
 class Search:
 
     def __init__(self, text, mode, case_sensitive, backwards):
         self.text, self.mode = text, mode
         self.case_sensitive = case_sensitive
         self.backwards = backwards
-        self._regex = None
+        self._regex = self._nsd = None
 
     def __eq__(self, other):
         if not isinstance(other, Search):
@@ -94,12 +111,16 @@ class Search:
         return self.text == other.text and self.mode == other.mode and self.case_sensitive == other.case_sensitive
 
     @property
+    def regex_flags(self):
+        flags = REGEX_FLAGS
+        if not self.case_sensitive:
+            flags |= regex.IGNORECASE
+        return flags
+
+    @property
     def regex(self):
         if self._regex is None:
             expr = self.text
-            flags = REGEX_FLAGS
-            if not self.case_sensitive:
-                flags = regex.IGNORECASE
             if self.mode != 'regex':
                 if self.mode == 'word':
                     words = []
@@ -108,8 +129,30 @@ class Search:
                     expr = r'\s+'.join(words)
                 else:
                     expr = text_to_regex(expr)
-            self._regex = regex.compile(expr, flags)
+            self._regex = regex.compile(expr, self.regex_flags)
         return self._regex
+
+    @property
+    def near_search_data(self):
+        if self._nsd is None:
+            words, interval = words_and_interval_for_near(self.text)
+            interval = max(1, interval)
+            flags = self.regex_flags
+            flags |= regex.DOTALL
+            match_any_word = r'(?:\b(?:' + '|'.join(words) + r')\b)'
+            joiner = '.{1,%d}' % interval
+            full_pat = regex.compile(joiner.join(match_any_word for x in words), flags=flags)
+            word_pats = tuple(regex.compile(rf'\b{x}\b', flags) for x in words)
+            self._nsd = word_pats, full_pat
+        return self._nsd
+
+    @property
+    def is_empty(self):
+        if not self.text:
+            return True
+        if self.mode in ('normal', 'word') and not regex.sub(r'[\s\p{P}]+', '', self.text):
+            return True
+        return False
 
     def __str__(self):
         from collections import namedtuple
@@ -310,11 +353,38 @@ def toc_nodes_for_search_result(sr):
 
 def search_in_name(name, search_query, ctx_size=75):
     raw = searchable_text_for_name(name)[0]
-    for match in search_query.regex.finditer(raw):
-        start, end = match.span()
+
+    if search_query.mode == 'near':
+        word_pats, full_pat = search_query.near_search_data
+
+        def miter():
+            for match in full_pat.finditer(raw):
+                text = match.group()
+                for word_pat in word_pats:
+                    if not word_pat.search(text):
+                        break
+                else:
+                    yield match.span()
+
+    elif search_query.mode == 'regex' or search_query.case_sensitive:
+        def miter():
+            for match in search_query.regex.finditer(raw):
+                yield match.span()
+
+    else:
+        spans = []
+
+        def miter():
+            return spans
+        if raw:
+            def a(s, l):
+                return spans.append((s, s + l))
+            primary_collator_without_punctuation().find_all(search_query.text, raw, a, search_query.mode == 'word')
+
+    for (start, end) in miter():
         before = raw[max(0, start-ctx_size):start]
         after = raw[end:end+ctx_size]
-        yield before, match.group(), after, start
+        yield before, raw[start:end], after, start
 
 
 class SearchInput(QWidget):  # {{{
@@ -345,14 +415,14 @@ class SearchInput(QWidget):  # {{{
         self.next_button = nb = QToolButton(self)
         h.addWidget(nb)
         nb.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        nb.setIcon(QIcon(I('arrow-down.png')))
+        nb.setIcon(QIcon.ic('arrow-down.png'))
         nb.clicked.connect(self.find_next)
         nb.setToolTip(_('Find next match'))
 
         self.prev_button = nb = QToolButton(self)
         h.addWidget(nb)
         nb.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        nb.setIcon(QIcon(I('arrow-up.png')))
+        nb.setIcon(QIcon.ic('arrow-up.png'))
         nb.clicked.connect(self.find_previous)
         nb.setToolTip(_('Find previous match'))
 
@@ -363,11 +433,19 @@ class SearchInput(QWidget):  # {{{
         qt.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         qt.addItem(_('Contains'), 'normal')
         qt.addItem(_('Whole words'), 'word')
+        qt.addItem(_('Nearby words'), 'near')
         qt.addItem(_('Regex'), 'regex')
         qt.setToolTip('<p>' + _(
             'Choose the type of search: <ul>'
-            '<li><b>Contains</b> will search for the entered text anywhere.'
-            '<li><b>Whole words</b> will search for whole words that equal the entered text.'
+            '<li><b>Contains</b> will search for the entered text anywhere. It will ignore punctuation,'
+            ' spaces and accents, unless Case sensitive searching is enabled.'
+            '<li><b>Whole words</b> will search for whole words that equal the entered text. As with'
+            ' "Contains" searches punctuation and accents are ignored.'
+            '<li><b>Nearby words</b> will search for whole words that are near each other in the text.'
+            ' For example: <i>calibre cool</i> will find places in the text where the words <i>calibre</i> and <i>cool</i>'
+            ' occur within 60 characters of each other. To change the number of characters add the number to the end of'
+            ' the list of words, for example: <i>calibre cool awesome 120</i> will search for <i>calibre</i>, <i>cool</i>'
+            ' and <i>awesome</i> within 120 characters of each other.'
             '<li><b>Regex</b> will interpret the text as a regular expression.'
         ))
         qt.setCurrentIndex(qt.findData(vprefs.get(f'viewer-{self.panel_name}-mode', 'normal') or 'normal'))
@@ -381,7 +459,7 @@ class SearchInput(QWidget):  # {{{
         h.addWidget(cs)
 
         self.return_button = rb = QToolButton(self)
-        rb.setIcon(QIcon(I('back.png')))
+        rb.setIcon(QIcon.ic('back.png'))
         rb.setToolTip(_('Go back to where you were before searching'))
         rb.clicked.connect(self.go_back)
         h.addWidget(rb)
@@ -428,6 +506,9 @@ class SearchInput(QWidget):  # {{{
             )
 
     def emit_search(self, backwards=False):
+        boss = get_boss()
+        if boss.check_for_read_aloud(_('the location of this search result')):
+            return
         vprefs[f'viewer-{self.panel_name}-case-sensitive'] = self.case_sensitive.isChecked()
         vprefs[f'viewer-{self.panel_name}-mode'] = self.query_type.currentData()
         sq = self.search_query(backwards)
@@ -440,9 +521,16 @@ class SearchInput(QWidget):  # {{{
     def find_previous(self):
         self.emit_search(backwards=True)
 
-    def focus_input(self, text=None):
+    def focus_input(self, text=None, search_type=None, case_sensitive=None):
         if text and hasattr(text, 'rstrip'):
             self.search_box.setText(text)
+        if search_type is not None:
+            idx = self.query_type.findData(search_type)
+            if idx < 0:
+                idx = self.query_type.findData('normal')
+            self.query_type.setCurrentIndex(idx)
+        if case_sensitive is not None:
+            self.case_sensitive.setChecked(bool(case_sensitive))
         self.search_box.setFocus(Qt.FocusReason.OtherFocusReason)
         le = self.search_box.lineEdit()
         le.end(False)
@@ -458,19 +546,38 @@ class Results(QTreeWidget):  # {{{
 
     def __init__(self, parent=None):
         QTreeWidget.__init__(self, parent)
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self.show_context_menu)
         self.setHeaderHidden(True)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.delegate = ResultsDelegate(self)
         self.setItemDelegate(self.delegate)
         self.itemClicked.connect(self.item_activated)
-        self.blank_icon = QIcon(I('blank.png'))
-        self.not_found_icon = QIcon(I('dialog_warning.png'))
+        self.blank_icon = QIcon.ic('blank.png')
+        self.not_found_icon = QIcon.ic('dialog_warning.png')
         self.currentItemChanged.connect(self.current_item_changed)
         self.section_font = QFont(self.font())
         self.section_font.setItalic(True)
         self.section_map = {}
         self.search_results = []
         self.item_map = {}
+        self.gesture_manager = GestureManager(self)
+        self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+
+    def show_context_menu(self, point):
+        self.context_menu = m = QMenu(self)
+        m.addAction(QIcon.ic('plus.png'), _('Expand all'), self.expandAll)
+        m.addAction(QIcon.ic('minus.png'), _('Collapse all'), self.collapseAll)
+        self.context_menu.popup(self.mapToGlobal(point))
+        return True
+
+
+    def viewportEvent(self, ev):
+        if hasattr(self, 'gesture_manager'):
+            ret = self.gesture_manager.handle_event(ev)
+            if ret is not None:
+                return ret
+        return super().viewportEvent(ev)
 
     def current_item_changed(self, current, previous):
         if current is not None:
@@ -529,6 +636,9 @@ class Results(QTreeWidget):  # {{{
         self.count_changed.emit(n)
 
     def item_activated(self):
+        boss = get_boss()
+        if boss.check_for_read_aloud(_('the location of this search result')):
+            return
         i = self.currentItem()
         if i:
             sr = i.data(0, SEARCH_RESULT_ROLE)
@@ -643,8 +753,8 @@ class SearchPanel(QWidget):  # {{{
     def update_hidden_message(self):
         self.hidden_message.setVisible(self.results.current_result_is_hidden)
 
-    def focus_input(self, text=None):
-        self.search_input.focus_input(text)
+    def focus_input(self, text=None, search_type=None, case_sensitive=None):
+        self.search_input.focus_input(text, search_type, case_sensitive)
 
     def search_cleared(self):
         self.results.clear_all_results()
@@ -714,6 +824,7 @@ class SearchPanel(QWidget):  # {{{
                 self.results.ensure_current_result_visible()
             else:
                 self.show_no_results_found()
+            self.show_search_result.emit({'on_discovery': True, 'search_finished': True, 'result_num': -1})
             return
         self.results.add_result(result)
         obj = result.for_js

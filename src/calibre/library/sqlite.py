@@ -11,13 +11,13 @@ import sqlite3 as sqlite, traceback, time, uuid, os
 from sqlite3 import IntegrityError, OperationalError
 from threading import Thread
 from threading import RLock
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import partial
 
 from calibre.ebooks.metadata import title_sort, author_to_author_sort
 from calibre.utils.date import parse_date, isoformat, local_tz, UNDEFINED_DATE
 from calibre import isbytestring, force_unicode
-from calibre.constants import iswindows, DEBUG, plugins_loc
+from calibre.constants import iswindows, DEBUG, plugins_loc, plugins
 from calibre.utils.icu import sort_key
 from calibre_extensions import speedup as _c_speedup
 from calibre import prints
@@ -25,7 +25,6 @@ from polyglot.builtins import cmp, native_string_type
 from polyglot import reprlib
 from polyglot.queue import Queue
 
-from dateutil.tz import tzoffset
 
 global_lock = RLock()
 
@@ -42,7 +41,7 @@ def _c_convert_timestamp(val):
     year, month, day, hour, minutes, seconds, tzsecs = ret
     try:
         return datetime(year, month, day, hour, minutes, seconds,
-                tzinfo=tzoffset(None, tzsecs)).astimezone(local_tz)
+                tzinfo=timezone(tzsecs)).astimezone(local_tz)
     except OverflowError:
         return UNDEFINED_DATE.astimezone(local_tz)
 
@@ -61,7 +60,7 @@ def _py_convert_timestamp(val):
             min = int(val[14:16])
             sec = int(val[17:19])
             return datetime(year, month, day, hour, min, sec,
-                    tzinfo=tzoffset(None, tzsecs))
+                    tzinfo=timezone(tzsecs))
         except:
             pass
         return parse_date(val, as_utc=False)
@@ -270,6 +269,7 @@ def do_connect(path, row_factory=None):
     # Dummy functions for dynamically created filters
     conn.create_function('books_list_filter', 1, lambda x: 1)
     conn.create_collation(native_string_type('icucollate'), icu_collator)
+    plugins.load_sqlite3_extension(conn, 'sqlite_extension')
     return conn
 
 

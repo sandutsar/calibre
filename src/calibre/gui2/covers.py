@@ -6,19 +6,19 @@ from collections import OrderedDict
 from contextlib import suppress
 from copy import deepcopy
 from qt.core import (
-    QApplication, QCheckBox, QColor, QColorDialog, QDialog, QDialogButtonBox,
-    QFormLayout, QFrame, QGridLayout, QHBoxLayout, QIcon, QInputDialog, QLabel,
-    QLineEdit, QListWidget, QListWidgetItem, QMenu, QPixmap, QPushButton, QSize,
-    QSizePolicy, QSpinBox, Qt, QTabWidget, QTimer, QToolButton, QVBoxLayout, QWidget,
-    pyqtSignal
+    QCheckBox, QColor, QColorDialog, QDialog, QDialogButtonBox, QFormLayout, QFrame,
+    QGridLayout, QHBoxLayout, QIcon, QInputDialog, QLabel, QLineEdit, QListWidget,
+    QListWidgetItem, QMenu, QPixmap, QPushButton, QSize, QSizePolicy, QSpinBox, Qt,
+    QTabWidget, QTimer, QToolButton, QVBoxLayout, QWidget, pyqtSignal,
 )
 
 from calibre.constants import config_dir
 from calibre.ebooks.covers import (
-    all_styles, cprefs, default_color_themes, generate_cover, override_prefs
+    all_styles, cprefs, default_color_themes, generate_cover, override_prefs,
 )
 from calibre.gui2 import error_dialog, gprefs
 from calibre.gui2.font_family_chooser import FontFamilyChooser
+from calibre.startup import connect_lambda
 from calibre.utils.date import now
 from calibre.utils.filenames import make_long_path_useable
 from calibre.utils.icu import primary_sort_key, sort_key
@@ -143,13 +143,13 @@ class CoverSettingsWidget(QWidget):
         self.colors_list = cl = QListWidget(cp)
         l.addWidget(cl, 1, 0, 1, -1)
         self.colors_map = OrderedDict()
-        self.ncs = ncs = QPushButton(QIcon(I('plus.png')), _('&New color scheme'), cp)
+        self.ncs = ncs = QPushButton(QIcon.ic('plus.png'), _('&New color scheme'), cp)
         ncs.clicked.connect(self.create_color_scheme)
         l.addWidget(ncs)
-        self.ecs = ecs = QPushButton(QIcon(I('format-fill-color.png')), _('&Edit color scheme'), cp)
+        self.ecs = ecs = QPushButton(QIcon.ic('format-fill-color.png'), _('&Edit color scheme'), cp)
         ecs.clicked.connect(self.edit_color_scheme)
         l.addWidget(ecs, l.rowCount()-1, 1)
-        self.rcs = rcs = QPushButton(QIcon(I('minus.png')), _('&Remove color scheme'), cp)
+        self.rcs = rcs = QPushButton(QIcon.ic('minus.png'), _('&Remove color scheme'), cp)
         rcs.clicked.connect(self.remove_color_scheme)
         l.addWidget(rcs, l.rowCount()-1, 2)
 
@@ -335,7 +335,7 @@ class CoverSettingsWidget(QWidget):
 
     @property
     def current_colors(self):
-        for name, li in iteritems(self.colors_map):
+        for name, li in self.colors_map.items():
             if li.isSelected():
                 return name
 
@@ -397,7 +397,10 @@ class CoverSettingsWidget(QWidget):
                 self.colors_list.item(i).setSelected(False)
 
     def create_color_scheme(self):
-        scheme = self.colors_map[self.current_colors].data(Qt.ItemDataRole.UserRole)
+        cs = self.current_colors
+        if cs is None:
+            cs = tuple(self.colors_map.keys())[0]
+        scheme = self.colors_map[cs].data(Qt.ItemDataRole.UserRole)
         d = CreateColorScheme('#' + _('My Color Scheme'), scheme, set(self.colors_map), parent=self)
         if d.exec() == QDialog.DialogCode.Accepted:
             name, scheme = d.data
@@ -554,9 +557,7 @@ class CoverSettingsDialog(QDialog):
             ' the list of checked styles/colors.'))
 
         self.resize(self.sizeHint())
-        geom = gprefs.get('cover_settings_dialog_geom', None)
-        if geom is not None:
-            QApplication.instance().safe_restore_geometry(self, geom)
+        self.restore_geometry(gprefs, 'cover_settings_dialog_geom')
         self.prefs_for_rendering = None
 
     def restore_defaults(self):
@@ -592,7 +593,7 @@ class CoverSettingsDialog(QDialog):
 
     def _save_settings(self):
         gprefs.set('cover_generation_save_settings_for_future', self.save_settings.isChecked())
-        gprefs.set('cover_settings_dialog_geom', bytearray(self.saveGeometry()))
+        self.save_geometry(gprefs, 'cover_settings_dialog_geom')
         self.settings.save_state()
 
     def accept(self):

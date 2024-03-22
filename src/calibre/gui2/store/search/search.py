@@ -6,7 +6,7 @@ import re
 from random import shuffle
 
 from qt.core import (Qt, QDialog, QDialogButtonBox, QTimer, QCheckBox, QLabel,
-                      QVBoxLayout, QIcon, QWidget, QTabWidget, QGridLayout, QApplication, QStyle)
+                      QVBoxLayout, QIcon, QWidget, QTabWidget, QGridLayout, QSize, QStyle)
 
 from calibre.gui2 import JSONConfig, info_dialog, error_dialog
 from calibre.gui2.dialogs.choose_format import ChooseFormatDialog
@@ -19,6 +19,13 @@ from calibre.gui2.store.search.download_thread import SearchThreadPool, \
     CacheUpdateThreadPool
 from calibre.gui2.store.search.search_ui import Ui_Dialog
 from calibre.utils.filenames import ascii_filename
+
+
+def add_items_to_context_menu(self, menu):
+    menu.addSeparator()
+    ac = menu.addAction(_('Clear search &history'))
+    ac.triggered.connect(self.clear_history)
+    return menu
 
 
 class SearchDialog(QDialog, Ui_Dialog):
@@ -36,6 +43,9 @@ class SearchDialog(QDialog, Ui_Dialog):
         self.search_title.initialize('store_search_search_title')
         self.search_author.initialize('store_search_search_author')
         self.search_edit.initialize('store_search_search')
+        self.search_title.add_items_to_context_menu = add_items_to_context_menu
+        self.search_author.add_items_to_context_menu = add_items_to_context_menu
+        self.search_edit.add_items_to_context_menu = add_items_to_context_menu
 
         # Loads variables that store various settings.
         # This needs to be called soon in __init__ because
@@ -50,6 +60,9 @@ class SearchDialog(QDialog, Ui_Dialog):
         self.results_view.model().cover_pool.set_thread_count(self.cover_thread_count)
         self.results_view.model().details_pool.set_thread_count(self.details_thread_count)
         self.results_view.setCursor(Qt.CursorShape.PointingHandCursor)
+        # needed for live updates of amazon_live.py
+        from calibre.live import start_worker
+        start_worker()
 
         # Check for results and hung threads.
         self.checker = QTimer()
@@ -78,9 +91,9 @@ class SearchDialog(QDialog, Ui_Dialog):
         self.button_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.button_layout.insertWidget(0, self.pi, 0, Qt.AlignmentFlag.AlignCenter)
 
-        self.adv_search_button.setIcon(QIcon(I('gear.png')))
+        self.adv_search_button.setIcon(QIcon.ic('gear.png'))
         self.adv_search_button.setToolTip(_('Advanced search'))
-        self.configure.setIcon(QIcon(I('config.png')))
+        self.configure.setIcon(QIcon.ic('config.png'))
 
         self.adv_search_button.clicked.connect(self.build_adv_search)
         self.search.clicked.connect(self.toggle_search)
@@ -117,7 +130,7 @@ class SearchDialog(QDialog, Ui_Dialog):
         store_list_layout = QGridLayout()
         stores_check_widget.setLayout(store_list_layout)
 
-        icon = QIcon(I('donate.png'))
+        icon = QIcon.ic('donate.png')
         for i, x in enumerate(sorted(self.gui.istores.keys(), key=lambda x: x.lower())):
             cbox = QCheckBox(x)
             cbox.setChecked(existing.get(x, first_run))
@@ -200,7 +213,7 @@ class SearchDialog(QDialog, Ui_Dialog):
         self.results_view.model().set_query(query)
 
         # Plugins are in random order that does not change.
-        # Randomize the ord of the plugin names every time
+        # Randomize the order of the plugin names every time
         # there is a search. This way plugins closer
         # to a don't have an unfair advantage over
         # plugins further from a.
@@ -246,11 +259,11 @@ class SearchDialog(QDialog, Ui_Dialog):
         return query.encode('utf-8')
 
     def save_state(self):
-        self.config['geometry'] = bytearray(self.saveGeometry())
+        self.save_geometry(self.config, 'geometry')
         self.config['store_splitter_state'] = bytearray(self.store_splitter.saveState())
         self.config['results_view_column_width'] = [self.results_view.columnWidth(i) for i in range(self.results_view.model().columnCount())]
         self.config['sort_col'] = self.results_view.model().sort_col
-        self.config['sort_order'] = self.results_view.model().sort_order
+        self.config['sort_order'] = self.results_view.model().sort_order.value
         self.config['open_external'] = self.open_external.isChecked()
 
         store_check = {}
@@ -259,10 +272,7 @@ class SearchDialog(QDialog, Ui_Dialog):
         self.config['store_checked'] = store_check
 
     def restore_state(self):
-        geometry = self.config.get('geometry', None)
-        if geometry:
-            QApplication.instance().safe_restore_geometry(self, geometry)
-
+        self.restore_geometry(self.config, 'geometry')
         splitter_state = self.config.get('store_splitter_state', None)
         if splitter_state:
             self.store_splitter.restoreState(splitter_state)
@@ -285,8 +295,11 @@ class SearchDialog(QDialog, Ui_Dialog):
                     self.store_checks[n].setChecked(store_check[n])
 
         self.results_view.model().sort_col = self.config.get('sort_col', 2)
-        self.results_view.model().sort_order = self.config.get('sort_order', Qt.SortOrder.AscendingOrder)
-        self.results_view.header().setSortIndicator(self.results_view.model().sort_col, self.results_view.model().sort_order)
+        so = self.config.get('sort_order', Qt.SortOrder.AscendingOrder)
+        if isinstance(so, int):
+            so = Qt.SortOrder(so)
+        self.results_view.model().sort_order = so
+        self.results_view.header().setSortIndicator(self.results_view.model().sort_col, so)
 
     def load_settings(self):
         # Seconds
@@ -328,11 +341,7 @@ class SearchDialog(QDialog, Ui_Dialog):
         tab_widget.addTab(search_config_widget, _('Configure s&earch'))
 
         # Restore dialog state.
-        geometry = self.config.get('config_dialog_geometry', None)
-        if geometry:
-            QApplication.instance().safe_restore_geometry(d, geometry)
-        else:
-            d.resize(800, 600)
+        self.restore_geometry(self.config, 'config_dialog_geometry')
         tab_index = self.config.get('config_dialog_tab_index', 0)
         tab_index = min(tab_index, tab_widget.count() - 1)
         tab_widget.setCurrentIndex(tab_index)
@@ -340,13 +349,16 @@ class SearchDialog(QDialog, Ui_Dialog):
         d.exec()
 
         # Save dialog state.
-        self.config['config_dialog_geometry'] = bytearray(d.saveGeometry())
+        self.save_geometry(self.config, 'config_dialog_geometry')
         self.config['config_dialog_tab_index'] = tab_widget.currentIndex()
 
         search_config_widget.save_settings()
         self.config_changed()
         self.gui.load_store_plugins()
         self.setup_store_checks()
+
+    def sizeHint(self):
+        return QSize(800, 600)
 
     def config_changed(self):
         self.load_settings()

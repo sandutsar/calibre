@@ -14,7 +14,7 @@ from functools import partial
 from itertools import repeat
 from qt.core import (
     QDialog, QDialogButtonBox, QGridLayout, QIcon, QLabel, QLineEdit, QListWidget,
-    QListWidgetItem, QPushButton, Qt
+    QListWidgetItem, QPushButton, Qt,
 )
 from threading import Thread
 
@@ -25,10 +25,10 @@ from calibre.gui2 import Dispatcher, config, error_dialog, gprefs, warning_dialo
 from calibre.gui2.threaded_jobs import ThreadedJob
 from calibre.library.save_to_disk import get_components
 from calibre.utils.config import prefs, tweaks
-from calibre.utils.filenames import ascii_filename
 from calibre.utils.icu import primary_sort_key
+from calibre.utils.resources import get_image_path as I
 from calibre.utils.smtp import (
-    compose_mail, config as email_config, extract_email_address, sendmail
+    compose_mail, config as email_config, extract_email_address, sendmail,
 )
 from polyglot.binary import from_hex_unicode
 from polyglot.builtins import iteritems, itervalues
@@ -116,7 +116,7 @@ class Sendmail:
             from_ = opts.from_
             if not from_:
                 from_ = 'calibre <calibre@'+socket.getfqdn()+'>'
-            with lopen(attachment, 'rb') as f:
+            with open(attachment, 'rb') as f:
                 msg = compose_mail(from_, to, text, subject, f, aname)
             efrom = extract_email_address(from_)
             eto = []
@@ -148,16 +148,36 @@ class Sendmail:
 gui_sendmail = Sendmail()
 
 
+def is_for_kindle(to):
+    return isinstance(to, str) and ('@kindle.com' in to or '@kindle.cn' in to or '@free.kindle.com' in to or '@free.kindle.cn' in to)
+
+
 def send_mails(jobnames, callback, attachments, to_s, subjects,
                 texts, attachment_names, job_manager):
     for name, attachment, to, subject, text, aname in zip(jobnames,
             attachments, to_s, subjects, texts, attachment_names):
         description = _('Email %(name)s to %(to)s') % dict(name=name, to=to)
-        if isinstance(to, str) and ('@pbsync.com' in to or '@kindle.com' in to):
-            # The pbsync service chokes on non-ascii filenames
-            # Dont know if amazon's service chokes or not, but since filenames
-            # arent visible on Kindles anyway, might as well be safe
-            aname = ascii_filename(aname)
+        if isinstance(to, str) and (is_for_kindle(to) or '@pbsync.com' in to):
+            # The PocketBook service is a total joke. It cant handle
+            # non-ascii, filenames that are long enough to be split up, commas, and
+            # the good lord alone knows what else. So use a random filename
+            # containing only 22 English letters and numbers
+            #
+            # And since this email is only going to be processed by automated
+            # services, make the subject+text random too as at least the amazon
+            # service cant handle non-ascii text. I dont know what baboons
+            # these companies employ to write their code. It's the height of
+            # irony that they are called "tech" companies.
+            # https://bugs.launchpad.net/calibre/+bug/1989282
+            from calibre.utils.short_uuid import uuid4
+            if is_for_kindle(to):
+                # https://www.mobileread.com/forums/showthread.php?t=349290
+                from calibre.utils.filenames import ascii_filename
+                aname = ascii_filename(aname)
+            else:
+                aname = f'{uuid4()}.' + aname.rpartition('.')[-1]
+            subject = uuid4()
+            text = uuid4()
         job = ThreadedJob('email', description, gui_sendmail, (attachment, aname, to,
                 subject, text), {}, callback)
         job_manager.run_threaded_job(job)
@@ -382,12 +402,10 @@ class EmailMixin:  # {{{
         if not ids or len(ids) == 0:
             return
 
-        files, _auto_ids = self.library_view.model().get_preferred_formats_from_ids(ids,
-                                    fmts, set_metadata=True,
-                                    specific_format=specific_format,
-                                    exclude_auto=do_auto_convert,
-                                    use_plugboard=plugboard_email_value,
-                                    plugboard_formats=plugboard_email_formats)
+        modified_metadata = []
+        files, _auto_ids = self.library_view.model().get_preferred_formats_from_ids(
+            ids, fmts, set_metadata=True, specific_format=specific_format, exclude_auto=do_auto_convert,
+            use_plugboard=plugboard_email_value, plugboard_formats=plugboard_email_formats, modified_metadata=modified_metadata)
         if do_auto_convert:
             nids = list(set(ids).difference(_auto_ids))
             ids = [i for i in ids if i in nids]
@@ -399,10 +417,10 @@ class EmailMixin:  # {{{
 
         bad, remove_ids, jobnames = [], [], []
         texts, subjects, attachments, attachment_names = [], [], [], []
-        for f, mi, id in zip(files, full_metadata, ids):
-            t = mi.title
-            if not t:
-                t = _('Unknown')
+        for f, mi, id, newmi in zip(files, full_metadata, ids, modified_metadata):
+            if not newmi:
+                newmi = mi
+            t = mi.title or _('Unknown')
             if f is None:
                 bad.append(t)
             else:
@@ -416,16 +434,22 @@ class EmailMixin:  # {{{
                     if not components:
                         components = [mi.title]
                     subjects.append(os.path.join(*components))
-                a = authors_to_string(mi.authors if mi.authors else
-                        [_('Unknown')])
+                a = authors_to_string(mi.authors or [_('Unknown')])
                 texts.append(_('Attached, you will find the e-book') +
                         '\n\n' + t + '\n\t' + _('by') + ' ' + a + '\n\n' +
                         _('in the %s format.') %
                         os.path.splitext(f)[1][1:].upper())
                 if mi.comments and gprefs['add_comments_to_email']:
+                    from calibre.ebooks.metadata import fmt_sidx
                     from calibre.utils.html2text import html2text
+                    if mi.series:
+                        sidx=fmt_sidx(1.0 if mi.series_index is None else mi.series_index, use_roman=config['use_roman_numerals_for_series_number'])
+                        texts[-1] += '\n\n' + _('{series_index} of {series}').format(series_index=sidx, series=mi.series)
                     texts[-1] += '\n\n' + _('About this book:') + '\n\n' + textwrap.fill(html2text(mi.comments))
-                prefix = f'{t} - {a}'
+                if is_for_kindle(to):
+                    prefix = str(newmi.title or t)
+                else:
+                    prefix = f'{t} - {a}'
                 if not isinstance(prefix, str):
                     prefix = prefix.decode(preferred_encoding, 'replace')
                 attachment_names.append(prefix + os.path.splitext(f)[1])

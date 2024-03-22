@@ -40,7 +40,7 @@ class QtHighlighter(QTextDocument):
                 dest_block = cursor.block()
                 c = QTextCursor(dest_block)
                 try:
-                    afs = block.layout().additionalFormats()
+                    afs = block.layout().formats()
                 except AttributeError:
                     afs = ()
                 for af in afs:
@@ -69,7 +69,8 @@ def pygments_lexer(filename):
         from pygments.util import ClassNotFound
     except ImportError:
         return None
-    glff = lambda n: get_lexer_for_filename(n, stripnl=False)
+    def glff(n):
+        return get_lexer_for_filename(n, stripnl=False)
     try:
         return glff(filename)
     except ClassNotFound:

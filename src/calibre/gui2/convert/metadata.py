@@ -5,9 +5,9 @@ __license__   = 'GPL v3'
 __copyright__ = '2009, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
-import os, re, errno
+import os, re
 
-from qt.core import QPixmap
+from qt.core import QPixmap, QApplication
 
 from calibre.gui2 import choose_images, error_dialog
 from calibre.gui2.convert.metadata_ui import Ui_Form
@@ -49,7 +49,7 @@ def create_cover_file(db, book_id):
 class MetadataWidget(Widget, Ui_Form):
 
     TITLE = _('Metadata')
-    ICON  = I('dialog_information.png')
+    ICON  = 'dialog_information.png'
     HELP  = _('Set the metadata. The output file will contain as much of this '
             'metadata as possible.')
     COMMIT_NAME = 'metadata'
@@ -106,13 +106,12 @@ class MetadataWidget(Widget, Ui_Form):
             pm = QPixmap()
             pm.loadFromData(cover)
             if not pm.isNull():
-                pm.setDevicePixelRatio(getattr(self, 'devicePixelRatioF', self.devicePixelRatio)())
+                pm.setDevicePixelRatio(self.devicePixelRatio())
                 self.cover.setPixmap(pm)
                 self.cover_data = cover
                 self.set_cover_tooltip(pm)
         else:
-            pm = QPixmap(I('default_cover.png'))
-            pm.setDevicePixelRatio(getattr(self, 'devicePixelRatioF', self.devicePixelRatio)())
+            pm = QApplication.instance().cached_qpixmap('default_cover.png', device_pixel_ratio=self.devicePixelRatio())
             self.cover.setPixmap(pm)
             self.cover.setToolTip(_('This book has no cover'))
         for x in ('author', 'series', 'publisher'):
@@ -244,13 +243,8 @@ class MetadataWidget(Widget, Ui_Form):
             if self.cover_changed and self.cover_data is not None:
                 self.db.set_cover(self.book_id, self.cover_data)
         except OSError as err:
-            if getattr(err, 'errno', None) == errno.EACCES:  # Permission denied
-                import traceback
-                fname = getattr(err, 'filename', None) or 'file'
-                error_dialog(self, _('Permission denied'),
-                        _('Could not open %s. Is it being used by another'
-                        ' program?')%fname, det_msg=traceback.format_exc(), show=True)
-                return False
+            err.locking_violation_msg = _('Failed to change on disk location of this book\'s files.')
+            raise
         publisher = self.publisher.text().strip()
         if publisher != db.field_for('publisher', self.book_id):
             db.set_field('publisher', {self.book_id:publisher})

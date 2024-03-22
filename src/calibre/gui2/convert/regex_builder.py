@@ -4,8 +4,7 @@
 import os
 from contextlib import suppress
 from qt.core import (
-    QApplication, QBrush, QByteArray, QDialog, QDialogButtonBox, Qt, QTextCursor,
-    QTextEdit, pyqtSignal
+    QBrush, QDialog, QDialogButtonBox, Qt, QTextCursor, QTextEdit, pyqtSignal,
 )
 
 from calibre.constants import iswindows
@@ -14,6 +13,7 @@ from calibre.gui2 import choose_files, error_dialog, gprefs
 from calibre.gui2.convert.regex_builder_ui import Ui_RegexBuilder
 from calibre.gui2.convert.xpath_wizard import XPathEdit
 from calibre.gui2.dialogs.choose_format import ChooseFormatDialog
+from calibre.gui2.widgets2 import to_plain_text
 from calibre.ptempfile import TemporaryFile
 from calibre.utils.icu import utf16_length
 from calibre.utils.ipc.simple_worker import WorkerError, fork_job
@@ -49,14 +49,11 @@ class RegexBuilder(QDialog, Ui_RegexBuilder):
         self.test.setDefault(True)
 
         self.match_locs = []
-        geom = gprefs.get('regex_builder_geometry', None)
-        if geom is not None:
-            QApplication.instance().safe_restore_geometry(self, QByteArray(geom))
+        self.restore_geometry(gprefs, 'regex_builder_geometry')
         self.finished.connect(self.save_state)
 
     def save_state(self, result):
-        geom = bytearray(self.saveGeometry())
-        gprefs['regex_builder_geometry'] = geom
+        self.save_geometry(gprefs, 'regex_builder_geometry')
 
     def regex_valid(self):
         regex = str(self.regex.text())
@@ -87,7 +84,7 @@ class RegexBuilder(QDialog, Ui_RegexBuilder):
             qt: int = 0
 
         if self.regex_valid():
-            text = str(self.preview.toPlainText())
+            text = to_plain_text(self.preview)
             regex = str(self.regex.text())
             cursor = QTextCursor(self.preview.document())
             extsel = QTextEdit.ExtraSelection()
@@ -208,7 +205,7 @@ class RegexBuilder(QDialog, Ui_RegexBuilder):
             self.open_book(files[0])
 
     def doc(self):
-        return str(self.preview.toPlainText())
+        return to_plain_text(self.preview)
 
 
 class RegexEdit(XPathEdit):

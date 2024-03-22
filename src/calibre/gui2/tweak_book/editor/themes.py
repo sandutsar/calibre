@@ -66,7 +66,7 @@ SOLARIZED = \
     Statement    fg={green} bold
     Keyword      fg={green}
     Special      fg={red}
-    SpecialCharacter bg={base02}
+    SpecialCharacter bg={base03}
 
     Error        us=wave uc={red}
     SpellError   us=wave uc={orange}
@@ -113,7 +113,7 @@ THEMES = {
     Special      fg={special}
     Error        us=wave uc=red
     SpellError   us=wave uc=orange
-    SpecialCharacter bg={cursor_loc}
+    SpecialCharacter bg=666666
     Link         fg=cyan
     BadLink      fg={string} us=wave uc=red
 
@@ -160,7 +160,7 @@ THEMES = {
     Statement    fg={keyword}
     Keyword      fg={keyword}
     Special      fg={special} italic
-    SpecialCharacter bg={cursor_loc}
+    SpecialCharacter bg=afafaf
     Error        us=wave uc=red
     SpellError   us=wave uc=magenta
     Link         fg=blue
@@ -443,7 +443,7 @@ class Property(QWidget):
             b = ColorButton(data, key, text, self)
             b.changed.connect(self.changed), l.addWidget(b)
             bc = QToolButton(self)
-            bc.setIcon(QIcon(I('clear_left.png')))
+            bc.setIcon(QIcon.ic('clear_left.png'))
             bc.setToolTip(_('Remove color'))
             bc.clicked.connect(b.clear)
             h = QHBoxLayout()
@@ -493,45 +493,45 @@ the color of the blinking cursor.</p>
 <p>As you make changes to your theme on the left, the changes will be reflected live in this panel.</p>
 
 <p xml:lang="und">
-{}
+{Normal}
     The most important rule. Sets the foreground and background colors for the \
     editor as well as the style of "normal" text, that is, text that does not match any special syntax.
 
-{}
+{Visual}
     Defines the colors for text selected by the mouse.
 
-{}
+{CursorLine}
     Defines the color for the line containing the cursor.
 
-{}
+{LineNr}
     Defines the colors for the line numbers on the left.
 
-{}
+{MatchParen}
     Defines the colors for matching tags in HTML and matching
     braces in CSS.
 
-{}
+{Function}
     Used for highlighting tags in HTML
 
-{}
+{Type}
     Used for highlighting attributes in HTML
 
-{}
+{Statement}
     Tag names in HTML
 
-{}
+{Constant}
     Namespace prefixes in XML and constants in CSS
 
-{}
-    Non-breaking spaces/hyphens in HTML
+{SpecialCharacter}
+    Non{endash}breaking{nbsp}spaces/hyphens in HTML
 
-{}
+{Error}
     Syntax errors such as <this <>
 
-{}
+{SpellError}
     Misspelled words such as <span lang="en">thisword</span>
 
-{}
+{Comment}
     Comments like <!-- this one -->
 
 </p>
@@ -568,14 +568,14 @@ class ThemeEditor(Dialog):
         t.setMinimumWidth(200)
         if t.count() > 0:
             t.setCurrentIndex(0)
-        t.currentIndexChanged[int].connect(self.show_theme)
+        t.currentIndexChanged.connect(self.show_theme)
         h.addWidget(t)
 
-        self.add_button = b = QPushButton(QIcon(I('plus.png')), _('Add &new theme'), self)
+        self.add_button = b = QPushButton(QIcon.ic('plus.png'), _('Add &new theme'), self)
         b.clicked.connect(self.create_new_theme)
         h.addWidget(b)
 
-        self.remove_button = b = QPushButton(QIcon(I('minus.png')), _('&Remove theme'), self)
+        self.remove_button = b = QPushButton(QIcon.ic('minus.png'), _('&Remove theme'), self)
         b.clicked.connect(self.remove_theme)
         h.addWidget(b)
         h.addStretch(1)
@@ -588,13 +588,14 @@ class ThemeEditor(Dialog):
 
         from calibre.gui2.tweak_book.editor.text import TextEdit
         self.preview = p = TextEdit(self, expected_geometry=(73, 50))
-        p.load_text(HELP_TEXT.format(
-                *('<b>%s</b>' % x for x in (
-                    'Normal', 'Visual', 'CursorLine', 'LineNr', 'MatchParen',
-                    'Function', 'Type', 'Statement', 'Constant', 'SpecialCharacter',
-                    'Error', 'SpellError', 'Comment'
-                ))
-            ))
+        t = {x: f'<b>{x}</b>' for x in (
+            'Normal', 'Visual', 'CursorLine', 'LineNr', 'MatchParen',
+            'Function', 'Type', 'Statement', 'Constant', 'SpecialCharacter',
+            'Error', 'SpellError', 'Comment')
+        }
+        t['nbsp'] = '\xa0'
+        t['endash'] = '–'
+        p.load_text(HELP_TEXT.format(**t))
         p.setMaximumWidth(p.size_hint.width() + 5)
         s.setMinimumWidth(600)
         self.splitter = sp = QSplitter(self)

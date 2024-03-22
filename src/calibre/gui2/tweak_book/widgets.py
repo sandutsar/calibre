@@ -10,48 +10,40 @@ import unicodedata
 from collections import OrderedDict
 from math import ceil
 from qt.core import (
-    QAbstractListModel, QApplication, QCheckBox, QComboBox, QCursor, QDialog,
-    QDialogButtonBox, QEvent, QFormLayout, QFrame, QGridLayout, QGroupBox,
-    QHBoxLayout, QIcon, QItemSelectionModel, QLabel, QLineEdit, QListView, QMimeData,
-    QModelIndex, QPainter, QPalette, QPixmap, QPlainTextEdit, QPoint, QRect, QSize,
-    QSizePolicy, QSplitter, QStaticText, QStyle, QStyledItemDelegate, Qt,
-    QTextDocument, QTextOption, QToolButton, QVBoxLayout, QWidget, pyqtSignal
+    QAbstractListModel, QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
+    QEvent, QFormLayout, QFrame, QGridLayout, QGroupBox, QHBoxLayout, QIcon,
+    QItemSelectionModel, QLabel, QLineEdit, QListView, QMimeData, QModelIndex, QPainter,
+    QPalette, QPixmap, QPlainTextEdit, QPoint, QRect, QSize, QSizePolicy, QSplitter,
+    QStaticText, QStyle, QStyledItemDelegate, Qt, QTextCursor, QTextDocument,
+    QTextOption, QToolButton, QVBoxLayout, QWidget, pyqtSignal,
 )
 
 from calibre import human_readable, prepare_string_for_xml
 from calibre.constants import iswindows
 from calibre.ebooks.oeb.polish.cover import get_raster_cover_name
 from calibre.ebooks.oeb.polish.toc import (
-    ensure_container_has_nav, get_guide_landmarks, get_nav_landmarks, set_landmarks
+    ensure_container_has_nav, get_guide_landmarks, get_nav_landmarks, set_landmarks,
 )
 from calibre.ebooks.oeb.polish.upgrade import guide_epubtype_map
 from calibre.ebooks.oeb.polish.utils import guess_type, lead_text
 from calibre.gui2 import (
-    choose_files, choose_images, choose_save_file, error_dialog, info_dialog
+    choose_files, choose_images, choose_save_file, error_dialog, info_dialog,
 )
 from calibre.gui2.complete2 import EditWithComplete
 from calibre.gui2.tweak_book import current_container, tprefs
 from calibre.gui2.widgets2 import (
-    PARAGRAPH_SEPARATOR, Dialog as BaseDialog, HistoryComboBox, to_plain_text
+    PARAGRAPH_SEPARATOR, Dialog as BaseDialog, HistoryComboBox, to_plain_text,
 )
+from calibre.startup import connect_lambda
 from calibre.utils.icu import (
-    numeric_sort_key, primary_contains, primary_sort_key, sort_key
+    numeric_sort_key, primary_contains, primary_sort_key, sort_key,
 )
 from calibre.utils.matcher import (
-    DEFAULT_LEVEL1, DEFAULT_LEVEL2, DEFAULT_LEVEL3, Matcher, get_char
+    DEFAULT_LEVEL1, DEFAULT_LEVEL2, DEFAULT_LEVEL3, Matcher, get_char,
 )
 from polyglot.builtins import iteritems
 
 ROOT = QModelIndex()
-
-
-class BusyCursor:
-
-    def __enter__(self):
-        QApplication.setOverrideCursor(QCursor(Qt.CursorShape.WaitCursor))
-
-    def __exit__(self, *args):
-        QApplication.restoreOverrideCursor()
 
 
 class Dialog(BaseDialog):
@@ -216,7 +208,7 @@ class ImportForeign(Dialog):  # {{{
         src.setPlaceholderText(_('Choose the file to import'))
         h1.addWidget(src)
         self.b1 = b = QToolButton(self)
-        b.setIcon(QIcon(I('document_open.png')))
+        b.setIcon(QIcon.ic('document_open.png'))
         b.setText(_('Choose file'))
         h1.addWidget(b)
         l.addRow(_('Source file:'), h1)
@@ -228,7 +220,7 @@ class ImportForeign(Dialog):  # {{{
         src.setPlaceholderText(_('Choose the location for the newly created EPUB'))
         h1.addWidget(src)
         self.b2 = b = QToolButton(self)
-        b.setIcon(QIcon(I('document_open.png')))
+        b.setIcon(QIcon.ic('document_open.png'))
         b.setText(_('Choose file'))
         h1.addWidget(b)
         l.addRow(_('Destination file:'), h1)
@@ -733,9 +725,9 @@ class InsertLink(Dialog):
                 frag = item.get('id', None) or item.get('name')
                 if not frag:
                     continue
-                text = lead_text(item, num_words=4)
+                text = lead_text(item, num_words=4).strip()
                 ac.append((text, frag))
-            ac.sort(key=lambda text_frag: numeric_sort_key(text_frag[0]))
+            ac.sort(key=lambda text_frag: numeric_sort_key(text_frag[0] or text_frag[1]))
         self.anchor_names.model().set_names(self.anchor_cache[name])
         self.update_target()
 
@@ -815,7 +807,8 @@ class InsertSemantics(Dialog):
         return QSize(800, 600)
 
     def create_known_type_map(self):
-        _ = lambda x: x
+        def _(x):
+            return x
         self.epubtype_guide_map = {v: k for k, v in guide_epubtype_map.items()}
         self.known_type_map = {
             'titlepage': _('Title page'),
@@ -995,7 +988,12 @@ class InsertSemantics(Dialog):
             return title
 
         for item_type, (name, frag) in self.changes.items():
-            set_guide_item(container, self.epubtype_guide_map[item_type], title_for_type(item_type), name, frag=frag)
+            guide_type = self.epubtype_guide_map.get(item_type)
+            if not guide_type:
+                if container.opf_version_parsed.major < 3:
+                    raise KeyError(_('Cannot set {} type semantics in EPUB 2 or AZW3 books').format(name))
+                continue
+            set_guide_item(container, guide_type, title_for_type(item_type), name, frag=frag)
 
         if container.opf_version_parsed.major > 2:
             final = self.original_nav_map.copy()
@@ -1175,7 +1173,7 @@ class AddCover(Dialog):
         p.setVisible(self.container.book_type != 'azw3')
 
         def on_state_change(s):
-            tprefs.set('add_cover_preserve_aspect_ratio', s == Qt.CheckState.Checked)
+            tprefs.set('add_cover_preserve_aspect_ratio', Qt.CheckState(s) == Qt.CheckState.Checked)
 
         p.stateChanged.connect(on_state_change)
         self.info_label = il = QLabel('\xa0')
@@ -1185,7 +1183,7 @@ class AddCover(Dialog):
         l.addWidget(self.bb)
         b = self.bb.addButton(_('Import &image'), QDialogButtonBox.ButtonRole.ActionRole)
         b.clicked.connect(self.import_image)
-        b.setIcon(QIcon(I('document_open.png')))
+        b.setIcon(QIcon.ic('document_open.png'))
         self.names.setFocus(Qt.FocusReason.OtherFocusReason)
         self.names.selectionModel().currentChanged.connect(self.current_image_changed)
         cname = get_raster_cover_name(self.container)
@@ -1286,6 +1284,31 @@ class PlainTextEdit(QPlainTextEdit):  # {{{
             if ret:
                 return True
         return QPlainTextEdit.event(self, ev)
+
+    def mouseDoubleClickEvent(self, ev):
+        super().mouseDoubleClickEvent(ev)
+        c = self.textCursor()
+        # Workaround for QTextCursor considering smart quotes as word
+        # characters https://bugreports.qt.io/browse/QTBUG-101372
+        changed = False
+        while True:
+            q = c.selectedText()
+            if not q:
+                break
+            left = min(c.anchor(), c.position())
+            right = max(c.anchor(), c.position())
+            if q[0] in '“‘':
+                changed = True
+                c.setPosition(left + 1)
+                c.setPosition(right, QTextCursor.MoveMode.KeepAnchor)
+            elif q[-1] in '’”':
+                changed = True
+                c.setPosition(left)
+                c.setPosition(right - 1, QTextCursor.MoveMode.KeepAnchor)
+            else:
+                break
+        if changed:
+            self.setTextCursor(c)
 
 # }}}
 

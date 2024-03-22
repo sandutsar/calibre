@@ -220,25 +220,39 @@ def remove_indents(txt):
     '''
     Remove whitespace at the beginning of each line.
     '''
-    return '\n'.join([l.lstrip() for l in txt.splitlines()])
+    return re.sub(r'^[\r\t\f\v ]+', r'', txt, flags=re.MULTILINE)
 
 
 def opf_writer(path, opf_name, manifest, spine, mi):
     opf = OPFCreator(path, mi)
     opf.create_manifest(manifest)
     opf.create_spine(spine)
-    with lopen(os.path.join(path, opf_name), 'wb') as opffile:
+    with open(os.path.join(path, opf_name), 'wb') as opffile:
         opf.render(opffile)
+
+
+def split_utf8(s, n):
+    """Split UTF-8 s into chunks of maximum length n."""
+    if n < 3:
+        raise ValueError(f'Cannot split into chunks of less than {n} < 4 bytes')
+    s = memoryview(s)
+    while len(s) > n:
+        k = n
+        while (s[k] & 0xc0) == 0x80:
+            k -= 1
+        yield bytes(s[:k])
+        s = s[k:]
+    yield bytes(s)
 
 
 def split_string_separator(txt, size):
     '''
     Splits the text by putting \n\n at the point size.
     '''
-    if len(txt) > size and size > 2:
+    if len(txt) > size and size > 3:
         size -= 2
         ans = []
-        for part in (txt[i * size: (i + 1) * size] for i in range(0, len(txt), size)):
+        for part in split_utf8(txt, size):
             idx = part.rfind(b'.')
             if idx == -1:
                 part += b'\n\n'

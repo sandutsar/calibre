@@ -3,12 +3,13 @@
 
 
 from qt.core import (
-    QApplication, QBrush, QColor, QFont, QFontMetrics, QPen, QPixmap, QSplashScreen,
-    Qt, QPainter
+    QApplication, QBrush, QColor, QFont, QFontMetrics, QPainter, QPen, QPixmap,
+    QSplashScreen, Qt,
 )
 
 from calibre.constants import __appname__, numeric_version
 from calibre.utils.monotonic import monotonic
+from calibre.utils.resources import get_image_path as I
 
 
 class SplashScreen(QSplashScreen):
@@ -113,7 +114,7 @@ class SplashScreen(QSplashScreen):
         if not self.develop:
             return QSplashScreen.keyPressEvent(self, ev)
         ev.accept()
-        QApplication.instance().quit()
+        QApplication.instance().exit()
 
 
 def main():

@@ -11,10 +11,14 @@ from calibre.ebooks.lrf.fonts import LIBERATION_FONT_MAP
 from calibre.ebooks.hyphenate import hyphenate_word
 from polyglot.builtins import string_or_bytes
 
-WEIGHT_MAP = lambda wt : int((wt/10)-1)
-NULL       = lambda a, b: a
-COLOR      = lambda a, b: QColor(*a)
-WEIGHT     = lambda a, b: WEIGHT_MAP(a)
+def WEIGHT_MAP(wt):
+    return int(wt / 10 - 1)
+def NULL(a, b):
+    return a
+def COLOR(a, b):
+    return QColor(*a)
+def WEIGHT(a, b):
+    return WEIGHT_MAP(a)
 
 
 class PixmapItem(QGraphicsPixmapItem):
@@ -79,8 +83,8 @@ class FontLoader:
             rfont = self.cache[font]
         else:
             italic = font[2] == QFont.Style.StyleItalic
-            rfont = QFont(font[0], font[3], font[1], italic)
-            rfont.setPixelSize(font[3])
+            rfont = QFont(font[0], int(font[3]), int(font[1]), italic)
+            rfont.setPixelSize(int(font[3]))
             rfont.setBold(wt>=69)
             self.cache[font] = rfont
         qfont = rfont
@@ -397,9 +401,9 @@ class Line(QGraphicsItem):
         matches = self.__class__.whitespace.finditer(phrase)
         font = QFont(ts.font)
         if self.valign is not None:
-            font.setPixelSize(font.pixelSize()/1.5)
+            font.setPixelSize(int(font.pixelSize()/1.5))
         fm = QFontMetrics(font)
-        single_space_width = fm.width(' ')
+        single_space_width = fm.horizontalAdvance(' ')
         height, descent = fm.height(), fm.descent()
         for match in matches:
             processed = True
@@ -408,7 +412,7 @@ class Line(QGraphicsItem):
                 right = left
             space_width = single_space_width * (right-left)
             word = phrase[phrase_pos:left]
-            width = fm.width(word)
+            width = fm.horizontalAdvance(word)
             if self.current_width + width < self.line_length:
                 self.commit(word, width, height, descent, ts, font)
                 if space_width > 0 and self.current_width + space_width < self.line_length:
@@ -421,14 +425,14 @@ class Line(QGraphicsItem):
                 tokens = hyphenate_word(word)
                 for i in range(len(tokens)-2, -1, -1):
                     word = ''.join(tokens[0:i+1])+'-'
-                    width = fm.width(word)
+                    width = fm.horizontalAdvance(word)
                     if self.current_width + width < self.line_length:
                         self.commit(word, width, height, descent, ts, font)
                         return phrase_pos + len(word)-1, True
             if self.current_width < 5:  # Force hyphenation as word is longer than line
                 for i in range(len(word)-5, 0, -5):
                     part = word[:i] + '-'
-                    width = fm.width(part)
+                    width = fm.horizontalAdvance(part)
                     if self.current_width + width < self.line_length:
                         self.commit(part, width, height, descent, ts, font)
                         return phrase_pos + len(part)-1, True
@@ -508,18 +512,18 @@ class Line(QGraphicsItem):
                     painter.save()
                     painter.setPen(QPen(Qt.PenStyle.NoPen))
                     painter.setBrush(QBrush(Qt.GlobalColor.yellow))
-                    painter.drawRect(x, 0, tok.width, tok.height)
+                    painter.drawRect(int(x), 0, tok.width, tok.height)
                     painter.restore()
                 painter.setPen(QPen(tok.text_color))
                 if tok.valign is None:
-                    painter.drawText(x, y, tok.string)
+                    painter.drawText(int(x), int(y), tok.string)
                 elif tok.valign == 'Sub':
-                    painter.drawText(x+1, y+self.descent/1.5, tok.string)
+                    painter.drawText(int(x+1), int(y+self.descent/1.5), tok.string)
                 elif tok.valign == 'Sup':
-                    painter.drawText(x+1, y-2.*self.descent, tok.string)
+                    painter.drawText(int(x+1), int(y-2.*self.descent), tok.string)
                 x += tok.width
             else:
-                painter.drawPixmap(x, 0, tok.pixmap())
+                painter.drawPixmap(int(x), 0, tok.pixmap())
                 x += tok.width
         painter.restore()
 

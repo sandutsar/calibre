@@ -1074,8 +1074,18 @@ class SelectionBar:
     def remove_highlight(self):
         annot_id = self.view.currently_showing.selection.annot_id
         if annot_id:
+            q = _('Are you sure you want to delete this highlight permanently?')
+            text = self.annotations_manager.text_for_highlight(annot_id)
+            if text and text.length:
+                if text.length > 20:
+                    text = text[:20] + '…'
+                notes = self.annotations_manager.notes_for_highlight(annot_id)
+                if notes and notes.length:
+                    q = _('Are you sure you want to delete the highlighting of "{}" and the associated notes permanently?').format(text)
+                else:
+                    q = _('Are you sure you want to delete the highlighting of "{}" permanently?').format(text)
             question_dialog(
-                _('Are you sure?'), _('Are you sure you want to delete this highlight permanently?'),
+                _('Are you sure?'), q,
                 def (yes):
                     if yes:
                         self.remove_highlight_with_id(annot_id)
@@ -1117,6 +1127,19 @@ class SelectionBar:
                     toc_family = family_for_toc_node(before.id)
             self.annotations_manager.add_highlight(
                 msg, self.current_highlight_style.style, notes, toc_family)
+        elif msg.type is 'highlight-overlapped':
+            question_dialog(
+                _('Are you sure?'), _('This highlight overlaps existing highlights. Creating it will cause notes'
+                                      ' in the existing highlights to be lost. Create it anyway?'),
+                def (yes):
+                    if yes:
+                        self.send_message(
+                            'apply-highlight-overwrite', style=msg.style, uuid=msg.uuid, existing=msg.existing, has_notes=msg.has_notes)
+                    else:
+                        if self.current_notes:
+                            self.show_editor(self.current_highlight_style, self.current_notes)
+                ,
+            )
         elif msg.type is 'edit-highlight':
             if self.state is WAITING:
                 self.create_highlight()

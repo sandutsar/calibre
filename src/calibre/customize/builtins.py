@@ -101,13 +101,22 @@ plugins += [HTML2ZIP, PML2PMLZ, TXT2TXTZ, ArchiveExtract, KPFExtract]
 class ComicMetadataReader(MetadataReaderPlugin):
 
     name = 'Read comic metadata'
-    file_types = {'cbr', 'cbz', 'cb7'}
+    file_types = {'cbr', 'cbz', 'cb7', 'cbc'}
     description = _('Extract cover from comic files')
 
     def customization_help(self, gui=False):
         return 'Read series number from volume or issue number. Default is volume, set this to issue to use issue number instead.'
 
     def get_metadata(self, stream, ftype):
+        if ftype == 'cbc':
+            from zipfile import ZipFile
+            zf = ZipFile(stream)
+            fcn = zf.open('comics.txt').read().decode('utf-8').splitlines()[0]
+            oname = getattr(stream, 'name', None)
+            stream = zf.open(fcn)
+            ftype = fcn.split('.')[-1].lower()
+            if oname:
+                stream.name = oname
         if hasattr(stream, 'seek') and hasattr(stream, 'tell'):
             pos = stream.tell()
             id_ = stream.read(3)
@@ -846,6 +855,18 @@ class ActionBrowseAnnotations(InterfaceActionBase):
     description = _('Browse highlights and bookmarks from all books in the library')
 
 
+class ActionBrowseNotes(InterfaceActionBase):
+    name = 'Browse Notes'
+    actual_plugin = 'calibre.gui2.actions.browse_notes:BrowseNotesAction'
+    description = _('Browse notes for authors, tags, etc. in the library')
+
+
+class ActionFullTextSearch(InterfaceActionBase):
+    name = 'Full Text Search'
+    actual_plugin = 'calibre.gui2.actions.fts:FullTextSearchAction'
+    description = _('Search the full text of all books in the calibre library')
+
+
 class ActionEditToC(InterfaceActionBase):
     name = 'Edit ToC'
     actual_plugin = 'calibre.gui2.actions.toc_edit:ToCEditAction'
@@ -1048,6 +1069,40 @@ class ActionMarkBooks(InterfaceActionBase):
     description = _('Temporarily mark books')
 
 
+class ActionManageCategories(InterfaceActionBase):
+    name = 'Manage categories'
+    author = 'Charles Haley'
+    actual_plugin = 'calibre.gui2.actions.manage_categories:ManageCategoriesAction'
+    description = _('Manage tag browser categories')
+
+
+class ActionSavedSearches(InterfaceActionBase):
+    name = 'Saved searches'
+    author = 'Charles Haley'
+    actual_plugin = 'calibre.gui2.actions.saved_searches:SavedSearchesAction'
+    description = _('Show a menu of saved searches')
+
+
+class ActionLayoutActions(InterfaceActionBase):
+    name = 'Layout Actions'
+    author = 'Charles Haley'
+    actual_plugin = 'calibre.gui2.actions.layout_actions:LayoutActions'
+    description = _("Show a menu of actions to change calibre's layout")
+
+
+class ActionBooklistContextMenu(InterfaceActionBase):
+    name = 'Booklist context menu'
+    author = 'Charles Haley'
+    actual_plugin = 'calibre.gui2.actions.booklist_context_menu:BooklistContextMenuAction'
+    description = _('Open the context menu for the column')
+
+
+class ActionAllActions(InterfaceActionBase):
+    name = 'All GUI actions'
+    author = 'Charles Haley'
+    actual_plugin = 'calibre.gui2.actions.all_actions:AllGUIActions'
+    description = _('Open a menu showing all installed GUI actions')
+
 class ActionVirtualLibrary(InterfaceActionBase):
     name = 'Virtual Library'
     actual_plugin = 'calibre.gui2.actions.virtual_library:VirtualLibraryAction'
@@ -1079,7 +1134,7 @@ class ActionPluginUpdater(InterfaceActionBase):
     actual_plugin = 'calibre.gui2.actions.plugin_updates:PluginUpdaterAction'
 
 
-plugins += [ActionAdd, ActionFetchAnnotations, ActionGenerateCatalog,
+plugins += [ActionAdd, ActionAllActions, ActionFetchAnnotations, ActionGenerateCatalog,
         ActionConvert, ActionDelete, ActionEditMetadata, ActionView,
         ActionFetchNews, ActionSaveToDisk, ActionQuickview, ActionPolish,
         ActionShowBookDetails,ActionRestart, ActionOpenFolder, ActionConnectShare,
@@ -1088,7 +1143,9 @@ plugins += [ActionAdd, ActionFetchAnnotations, ActionGenerateCatalog,
         ActionCopyToLibrary, ActionTweakEpub, ActionUnpackBook, ActionNextMatch, ActionStore,
         ActionPluginUpdater, ActionPickRandom, ActionEditToC, ActionSortBy,
         ActionMarkBooks, ActionEmbed, ActionTemplateTester, ActionTagMapper, ActionAuthorMapper,
-        ActionVirtualLibrary, ActionBrowseAnnotations, ActionTemplateFunctions, ActionAutoscrollBooks]
+        ActionVirtualLibrary, ActionBrowseAnnotations, ActionTemplateFunctions, ActionAutoscrollBooks,
+        ActionFullTextSearch, ActionManageCategories, ActionBooklistContextMenu, ActionSavedSearches,
+        ActionLayoutActions, ActionBrowseNotes,]
 
 # }}}
 
@@ -1097,7 +1154,7 @@ plugins += [ActionAdd, ActionFetchAnnotations, ActionGenerateCatalog,
 
 class LookAndFeel(PreferencesPlugin):
     name = 'Look & Feel'
-    icon = I('lookfeel.png')
+    icon = 'lookfeel.png'
     gui_name = _('Look & feel')
     category = 'Interface'
     gui_category = _('Interface')
@@ -1110,7 +1167,7 @@ class LookAndFeel(PreferencesPlugin):
 
 class Behavior(PreferencesPlugin):
     name = 'Behavior'
-    icon = I('config.png')
+    icon = 'config.png'
     gui_name = _('Behavior')
     category = 'Interface'
     gui_category = _('Interface')
@@ -1122,7 +1179,7 @@ class Behavior(PreferencesPlugin):
 
 class Columns(PreferencesPlugin):
     name = 'Custom Columns'
-    icon = I('column.png')
+    icon = 'column.png'
     gui_name = _('Add your own columns')
     category = 'Interface'
     gui_category = _('Interface')
@@ -1134,7 +1191,7 @@ class Columns(PreferencesPlugin):
 
 class Toolbar(PreferencesPlugin):
     name = 'Toolbar'
-    icon = I('wizard.png')
+    icon = 'wizard.png'
     gui_name = _('Toolbars & menus')
     category = 'Interface'
     gui_category = _('Interface')
@@ -1147,7 +1204,7 @@ class Toolbar(PreferencesPlugin):
 
 class Search(PreferencesPlugin):
     name = 'Search'
-    icon = I('search.png')
+    icon = 'search.png'
     gui_name = _('Searching')
     category = 'Interface'
     gui_category = _('Interface')
@@ -1159,7 +1216,7 @@ class Search(PreferencesPlugin):
 
 class InputOptions(PreferencesPlugin):
     name = 'Input Options'
-    icon = I('arrow-down.png')
+    icon = 'arrow-down.png'
     gui_name = _('Input options')
     category = 'Conversion'
     gui_category = _('Conversion')
@@ -1176,7 +1233,7 @@ class InputOptions(PreferencesPlugin):
 
 class CommonOptions(PreferencesPlugin):
     name = 'Common Options'
-    icon = I('convert.png')
+    icon = 'convert.png'
     gui_name = _('Common options')
     category = 'Conversion'
     gui_category = _('Conversion')
@@ -1188,7 +1245,7 @@ class CommonOptions(PreferencesPlugin):
 
 class OutputOptions(PreferencesPlugin):
     name = 'Output Options'
-    icon = I('arrow-up.png')
+    icon = 'arrow-up.png'
     gui_name = _('Output options')
     category = 'Conversion'
     gui_category = _('Conversion')
@@ -1200,7 +1257,7 @@ class OutputOptions(PreferencesPlugin):
 
 class Adding(PreferencesPlugin):
     name = 'Adding'
-    icon = I('add_book.png')
+    icon = 'add_book.png'
     gui_name = _('Adding books')
     category = 'Import/Export'
     gui_category = _('Import/export')
@@ -1213,7 +1270,7 @@ class Adding(PreferencesPlugin):
 
 class Saving(PreferencesPlugin):
     name = 'Saving'
-    icon = I('save.png')
+    icon = 'save.png'
     gui_name = _('Saving books to disk')
     category = 'Import/Export'
     gui_category = _('Import/export')
@@ -1226,7 +1283,7 @@ class Saving(PreferencesPlugin):
 
 class Sending(PreferencesPlugin):
     name = 'Sending'
-    icon = I('sync.png')
+    icon = 'sync.png'
     gui_name = _('Sending books to devices')
     category = 'Import/Export'
     gui_category = _('Import/export')
@@ -1239,7 +1296,7 @@ class Sending(PreferencesPlugin):
 
 class Plugboard(PreferencesPlugin):
     name = 'Plugboard'
-    icon = I('plugboard.png')
+    icon = 'plugboard.png'
     gui_name = _('Metadata plugboards')
     category = 'Import/Export'
     gui_category = _('Import/export')
@@ -1251,7 +1308,7 @@ class Plugboard(PreferencesPlugin):
 
 class TemplateFunctions(PreferencesPlugin):
     name = 'TemplateFunctions'
-    icon = I('template_funcs.png')
+    icon = 'template_funcs.png'
     gui_name = _('Template functions')
     category = 'Advanced'
     gui_category = _('Advanced')
@@ -1263,7 +1320,7 @@ class TemplateFunctions(PreferencesPlugin):
 
 class Email(PreferencesPlugin):
     name = 'Email'
-    icon = I('mail.png')
+    icon = 'mail.png'
     gui_name = _('Sharing books by email')
     category = 'Sharing'
     gui_category = _('Sharing')
@@ -1276,7 +1333,7 @@ class Email(PreferencesPlugin):
 
 class Server(PreferencesPlugin):
     name = 'Server'
-    icon = I('network-server.png')
+    icon = 'network-server.png'
     gui_name = _('Sharing over the net')
     category = 'Sharing'
     gui_category = _('Sharing')
@@ -1290,7 +1347,7 @@ class Server(PreferencesPlugin):
 
 class MetadataSources(PreferencesPlugin):
     name = 'Metadata download'
-    icon = I('download-metadata.png')
+    icon = 'download-metadata.png'
     gui_name = _('Metadata download')
     category = 'Sharing'
     gui_category = _('Sharing')
@@ -1302,7 +1359,7 @@ class MetadataSources(PreferencesPlugin):
 
 class IgnoredDevices(PreferencesPlugin):
     name = 'Ignored Devices'
-    icon = I('reader.png')
+    icon = 'reader.png'
     gui_name = _('Ignored devices')
     category = 'Sharing'
     gui_category = _('Sharing')
@@ -1315,7 +1372,7 @@ class IgnoredDevices(PreferencesPlugin):
 
 class Plugins(PreferencesPlugin):
     name = 'Plugins'
-    icon = I('plugins.png')
+    icon = 'plugins.png'
     gui_name = _('Plugins')
     category = 'Advanced'
     gui_category = _('Advanced')
@@ -1328,7 +1385,7 @@ class Plugins(PreferencesPlugin):
 
 class Tweaks(PreferencesPlugin):
     name = 'Tweaks'
-    icon = I('tweaks.png')
+    icon = 'tweaks.png'
     gui_name = _('Tweaks')
     category = 'Advanced'
     gui_category = _('Advanced')
@@ -1340,7 +1397,7 @@ class Tweaks(PreferencesPlugin):
 
 class Keyboard(PreferencesPlugin):
     name = 'Keyboard'
-    icon = I('keyboard-prefs.png')
+    icon = 'keyboard-prefs.png'
     gui_name = _('Shortcuts')
     category = 'Advanced'
     gui_category = _('Advanced')
@@ -1352,7 +1409,7 @@ class Keyboard(PreferencesPlugin):
 
 class Misc(PreferencesPlugin):
     name = 'Misc'
-    icon = I('exec.png')
+    icon = 'exec.png'
     gui_name = _('Miscellaneous')
     category = 'Advanced'
     gui_category = _('Advanced')
@@ -1641,7 +1698,7 @@ class StoreKoboStore(StoreBase):
 
     headquarters = 'CA'
     formats = ['EPUB']
-    affiliate = True
+    affiliate = False
 
 
 class StoreLegimiStore(StoreBase):
@@ -1829,15 +1886,6 @@ class StoreWoblinkStore(StoreBase):
     affiliate = True
 
 
-class XinXiiStore(StoreBase):
-    name = 'XinXii'
-    description = ''
-    actual_plugin = 'calibre.gui2.store.stores.xinxii_plugin:XinXiiStore'
-
-    headquarters = 'DE'
-    formats = ['EPUB', 'PDF']
-
-
 plugins += [
     StoreArchiveOrgStore,
     StoreBubokPublishingStore,
@@ -1882,7 +1930,6 @@ plugins += [
     StoreWeightlessBooksStore,
     StoreWolneLekturyStore,
     StoreWoblinkStore,
-    XinXiiStore
 ]
 
 # }}}
@@ -1929,12 +1976,12 @@ if __name__ == '__main__':
         ):
             if x in sys.modules:
                 ret = 1
-                print (x, 'has been loaded by a plugin')
+                print(x, 'has been loaded by a plugin')
         if ret:
-            print ('\\nA good way to track down what is loading something is to run'
+            print('\\nA good way to track down what is loading something is to run'
             ' python -c "import init_calibre; import calibre.customize.builtins"')
             print()
-        print ('Time taken to import all plugins: %.2f'%t)
+        print('Time taken to import all plugins: %.2f'%t)
         sys.exit(ret)
 
         ''')])

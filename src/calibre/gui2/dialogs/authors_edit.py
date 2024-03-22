@@ -5,15 +5,16 @@ __license__ = 'GPL v3'
 __copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
 
 from collections import OrderedDict
-
 from qt.core import (
-    QDialog, QGridLayout, QDialogButtonBox, QListWidget, QApplication, Qt,
-    pyqtSignal, QSize, QPushButton, QIcon, QStyledItemDelegate, QLabel, QAbstractItemView)
+    QAbstractItemView, QApplication, QDialog, QDialogButtonBox, QGridLayout, QIcon,
+    QLabel, QListWidget, QPushButton, QSize, QStyledItemDelegate, Qt, pyqtSignal,
+)
 
-from calibre.utils.config_base import tweaks
+from calibre.ebooks.metadata import string_to_authors
 from calibre.gui2 import gprefs
 from calibre.gui2.complete2 import EditWithComplete
-from calibre.ebooks.metadata import string_to_authors
+from calibre.utils.config_base import tweaks
+from calibre.utils.icu import lower as icu_lower
 
 
 class ItemDelegate(QStyledItemDelegate):
@@ -29,8 +30,8 @@ class ItemDelegate(QStyledItemDelegate):
 
     def setEditorData(self, editor, index):
         name = str(index.data(Qt.ItemDataRole.DisplayRole) or '')
-        editor.setText(name)
-        editor.lineEdit().selectAll()
+        n = editor.metaObject().userProperty().name()
+        editor.setProperty(n, name)
 
     def setModelData(self, editor, model, index):
         authors = string_to_authors(str(editor.text()))
@@ -139,13 +140,13 @@ class AuthorsEdit(QDialog):
         l.addWidget(a, 2, 0)
 
         self.ab = b = QPushButton(_('&Add'))
-        b.setIcon(QIcon(I('plus.png')))
+        b.setIcon(QIcon.ic('plus.png'))
         l.addWidget(b, 2, 1)
         b.clicked.connect(self.add_author)
 
         self.db = b = QPushButton(_('&Remove selected'))
         l.addWidget(b, 2, 2)
-        b.setIcon(QIcon(I('minus.png')))
+        b.setIcon(QIcon.ic('minus.png'))
         b.clicked.connect(self.al.delete_selected)
 
         self.bb = bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
@@ -155,20 +156,15 @@ class AuthorsEdit(QDialog):
 
         l.setColumnStretch(0, 10)
         self.resize(self.sizeHint() + QSize(150, 100))
-        geom = gprefs.get('authors-edit-geometry', None)
-        if geom is not None:
-            QApplication.instance().safe_restore_geometry(self, geom)
+        self.restore_geometry(gprefs, 'authors-edit-geometry')
         self.author.setFocus(Qt.FocusReason.OtherFocusReason)
 
-    def save_geometry(self):
-        gprefs.set('authors-edit-geometry', bytearray(self.saveGeometry()))
-
     def accept(self):
-        self.save_geometry()
+        self.save_geometry(gprefs, 'authors-edit-geometry')
         return QDialog.accept(self)
 
     def reject(self):
-        self.save_geometry()
+        self.save_geometry(gprefs, 'authors-edit-geometry')
         return QDialog.reject(self)
 
     @property

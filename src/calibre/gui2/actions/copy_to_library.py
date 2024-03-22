@@ -10,9 +10,9 @@ from collections import defaultdict
 from contextlib import closing
 from functools import partial
 from qt.core import (
-    QAbstractItemView, QApplication, QCheckBox, QDialog, QDialogButtonBox,
-    QFormLayout, QGridLayout, QHBoxLayout, QIcon, QLabel, QLineEdit, QListWidget,
-    QListWidgetItem, QScrollArea, QSize, Qt, QToolButton, QVBoxLayout, QWidget
+    QAbstractItemView, QApplication, QCheckBox, QDialog, QDialogButtonBox, QFormLayout,
+    QGridLayout, QHBoxLayout, QIcon, QLabel, QLineEdit, QListWidget, QListWidgetItem,
+    QScrollArea, QSize, Qt, QToolButton, QVBoxLayout, QWidget,
 )
 from threading import Thread
 
@@ -20,14 +20,16 @@ from calibre import as_unicode
 from calibre.constants import ismacos
 from calibre.db.copy_to_library import copy_one_book
 from calibre.gui2 import (
-    Dispatcher, choose_dir, error_dialog, gprefs, info_dialog, warning_dialog
+    Dispatcher, choose_dir, error_dialog, gprefs, info_dialog, warning_dialog,
 )
 from calibre.gui2.actions import InterfaceAction
 from calibre.gui2.actions.choose_library import library_qicon
 from calibre.gui2.dialogs.progress import ProgressDialog
 from calibre.gui2.widgets2 import Dialog
+from calibre.startup import connect_lambda
 from calibre.utils.config import prefs
 from calibre.utils.icu import numeric_sort_key, sort_key
+from calibre.utils.localization import ngettext
 from polyglot.builtins import iteritems, itervalues
 
 
@@ -226,7 +228,7 @@ class ChooseLibrary(Dialog):  # {{{
         le = self.le = QLineEdit(self)
         la.setBuddy(le)
         b = self.b = QToolButton(self)
-        b.setIcon(QIcon(I('document_open.png')))
+        b.setIcon(QIcon.ic('document_open.png'))
         b.setToolTip(_('Browse for library'))
         b.clicked.connect(self.browse)
         h = QHBoxLayout()
@@ -237,11 +239,11 @@ class ChooseLibrary(Dialog):  # {{{
         bb.setStandardButtons(QDialogButtonBox.StandardButton.Cancel)
         self.delete_after_copy = False
         b = bb.addButton(_('&Copy'), QDialogButtonBox.ButtonRole.AcceptRole)
-        b.setIcon(QIcon(I('edit-copy.png')))
+        b.setIcon(QIcon.ic('edit-copy.png'))
         b.setToolTip(_('Copy to the specified library'))
         b2 = bb.addButton(_('&Move'), QDialogButtonBox.ButtonRole.AcceptRole)
         connect_lambda(b2.clicked, self, lambda self: setattr(self, 'delete_after_copy', True))
-        b2.setIcon(QIcon(I('edit-cut.png')))
+        b2.setIcon(QIcon.ic('edit-cut.png'))
         b2.setToolTip(_('Copy to the specified library and delete from the current library'))
         b.setDefault(True)
         l.addWidget(bb, 1, 0, 1, 2)
@@ -293,11 +295,11 @@ class DuplicatesQuestion(QDialog):  # {{{
         bb.accepted.connect(self.accept)
         bb.rejected.connect(self.reject)
         self.a = b = bb.addButton(_('Select &all'), QDialogButtonBox.ButtonRole.ActionRole)
-        b.clicked.connect(self.select_all), b.setIcon(QIcon(I('plus.png')))
+        b.clicked.connect(self.select_all), b.setIcon(QIcon.ic('plus.png'))
         self.n = b = bb.addButton(_('Select &none'), QDialogButtonBox.ButtonRole.ActionRole)
-        b.clicked.connect(self.select_none), b.setIcon(QIcon(I('minus.png')))
+        b.clicked.connect(self.select_none), b.setIcon(QIcon.ic('minus.png'))
         self.ctc = b = bb.addButton(_('&Copy to clipboard'), QDialogButtonBox.ButtonRole.ActionRole)
-        b.clicked.connect(self.copy_to_clipboard), b.setIcon(QIcon(I('edit-copy.png')))
+        b.clicked.connect(self.copy_to_clipboard), b.setIcon(QIcon.ic('edit-copy.png'))
         l.addWidget(bb)
         self.resize(600, 400)
 
@@ -458,7 +460,9 @@ class CopyToLibraryAction(InterfaceAction):
         aname = _('Moving to') if delete_after else _('Copying to')
         dtitle = '%s %s'%(aname, os.path.basename(loc))
         self.pd = ProgressDialog(dtitle, min=0, max=len(ids)-1,
-                parent=self.gui, cancelable=True, icon='lt.png')
+                parent=self.gui, cancelable=True, icon='lt.png', cancel_confirm_msg=_(
+                    'Aborting this operation means that only some books will be copied'
+                    ' and resuming a partial copy is not supported. Are you sure you want to abort?'))
 
         def progress(idx, title):
             self.pd.set_msg(title)

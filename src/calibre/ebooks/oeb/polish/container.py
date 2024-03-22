@@ -33,7 +33,6 @@ from calibre.ebooks.metadata.opf3 import (
 from calibre.ebooks.metadata.utils import parse_opf_version
 from calibre.ebooks.mobi import MobiError
 from calibre.ebooks.mobi.reader.headers import MetadataHeader
-from calibre.ebooks.mobi.tweak import set_cover
 from calibre.ebooks.oeb.base import (
     DC11_NS, OEB_DOCS, OEB_STYLES, OPF, OPF2_NS, Manifest, itercsslinks, iterlinks,
     rewrite_links, serialize, urlquote, urlunquote
@@ -42,7 +41,7 @@ from calibre.ebooks.oeb.parse_utils import NotHTML, parse_html
 from calibre.ebooks.oeb.polish.errors import DRMError, InvalidBook
 from calibre.ebooks.oeb.polish.parsing import parse as parse_html_tweak
 from calibre.ebooks.oeb.polish.utils import (
-    CommentFinder, PositionFinder, guess_type, parse_css
+    CommentFinder, PositionFinder, adjust_mime_for_epub, guess_type, parse_css, OEB_FONTS
 )
 from calibre.ptempfile import PersistentTemporaryDirectory, PersistentTemporaryFile
 from calibre.utils.filenames import hardlink_file, nlinks_file, retry_on_fail
@@ -54,10 +53,9 @@ from polyglot.builtins import iteritems
 from polyglot.urllib import urlparse
 
 exists, join, relpath = os.path.exists, os.path.join, os.path.relpath
-
-OEB_FONTS = {guess_type('a.ttf'), guess_type('b.otf'), guess_type('a.woff'), 'application/x-font-ttf', 'application/x-font-otf', 'application/font-sfnt'}
 OPF_NAMESPACES = {'opf':OPF2_NS, 'dc':DC11_NS}
 null = object()
+OEB_FONTS  # for plugin compat
 
 
 class CSSPreProcessor(cssp):
@@ -120,7 +118,10 @@ def href_to_name(href, root, base=None):
         # assume all such paths are invalid/absolute paths.
         return None
     fullpath = os.path.join(base, *href.split('/'))
-    return unicodedata.normalize('NFC', abspath_to_name(fullpath, root))
+    try:
+        return unicodedata.normalize('NFC', abspath_to_name(fullpath, root))
+    except ValueError:
+        return None
 
 
 class ContainerBase:  # {{{
@@ -142,20 +143,7 @@ class ContainerBase:  # {{{
 
     def guess_type(self, name):
         ' Return the expected mimetype for the specified file name based on its extension. '
-        # epubcheck complains if the mimetype for text documents is set to
-        # text/html in EPUB 2 books. Sigh.
-        ans = guess_type(name)
-        if ans == 'text/html':
-            ans = 'application/xhtml+xml'
-        if ans in {'application/x-font-truetype', 'application/vnd.ms-opentype'}:
-            opfversion = self.opf_version_parsed[:2]
-            if opfversion > (3, 0):
-                return 'application/font-sfnt'
-            if opfversion >= (3, 0):
-                # bloody epubcheck has recently decided it likes this mimetype
-                # for ttf files
-                return 'application/vnd.ms-opentype'
-        return ans
+        return adjust_mime_for_epub(filename=name, opf_version=self.opf_version_parsed)
 
     def decode(self, data, normalize_to_nfc=True):
         """
@@ -303,7 +291,10 @@ class Container(ContainerBase):  # {{{
     def refresh_mime_map(self):
         for item in self.opf_xpath('//opf:manifest/opf:item[@href and @media-type]'):
             href = item.get('href')
-            name = self.href_to_name(href, self.opf_name)
+            try:
+                name = self.href_to_name(href, self.opf_name)
+            except ValueError:
+                continue  # special filenames such as CON on windows cause relpath to fail
             mt = item.get('media-type')
             if name in self.mime_map and name != self.opf_name and mt:
                 # some epubs include the opf in the manifest with an incorrect mime type
@@ -324,7 +315,7 @@ class Container(ContainerBase):  # {{{
         }
 
     def clone_data(self, dest_dir):
-        Container.commit(self, keep_parsed=True)
+        Container.commit(self, keep_parsed=False)
         self.cloned = True
         clone_dir(self.root, dest_dir)
         return self.data_for_clone(dest_dir)
@@ -381,7 +372,7 @@ class Container(ContainerBase):  # {{{
         base = os.path.dirname(path)
         if not os.path.exists(base):
             os.makedirs(base)
-        with lopen(path, 'wb') as f:
+        with open(path, 'wb') as f:
             if hasattr(data, 'read'):
                 shutil.copyfileobj(data, f)
             else:
@@ -596,7 +587,7 @@ class Container(ContainerBase):  # {{{
         return set()
 
     def parse(self, path, mime):
-        with lopen(path, 'rb') as src:
+        with open(path, 'rb') as src:
             data = src.read()
         if mime in OEB_DOCS:
             data = self.parse_xhtml(data, self.relpath(path))
@@ -950,7 +941,7 @@ class Container(ContainerBase):  # {{{
         name. Ensures uniqueness of href and id automatically. Returns
         generated item.'''
         id_prefix = id_prefix or 'id'
-        media_type = media_type or guess_type(name)
+        media_type = media_type or self.guess_type(name)
         if unique_href:
             name = self.make_name_unique(name)
         href = self.name_to_href(name, self.opf_name)
@@ -977,7 +968,7 @@ class Container(ContainerBase):  # {{{
         base = os.path.dirname(path)
         if not os.path.exists(base):
             os.makedirs(base)
-        lopen(path, 'wb').close()
+        open(path, 'wb').close()
         return item
 
     def format_opf(self):
@@ -1032,7 +1023,7 @@ class Container(ContainerBase):  # {{{
         if self.cloned and nlinks_file(dest) > 1:
             # Decouple this file from its links
             os.unlink(dest)
-        with lopen(dest, 'wb') as f:
+        with open(dest, 'wb') as f:
             f.write(data)
 
     def filesize(self, name):
@@ -1070,7 +1061,7 @@ class Container(ContainerBase):  # {{{
         this will commit the file if it is dirtied and remove it from the parse
         cache. You must finish with this file before accessing the parsed
         version of it again, or bad things will happen. '''
-        return lopen(self.get_file_path_for_processing(name, mode not in {'r', 'rb'}), mode)
+        return open(self.get_file_path_for_processing(name, mode not in {'r', 'rb'}), mode)
 
     def commit(self, outpath=None, keep_parsed=False):
         '''
@@ -1088,7 +1079,7 @@ class Container(ContainerBase):  # {{{
         mismatches = []
         for name, path in iteritems(self.name_path_map):
             opath = other.name_path_map[name]
-            with lopen(path, 'rb') as f1, lopen(opath, 'rb') as f2:
+            with open(path, 'rb') as f1, open(opath, 'rb') as f2:
                 if f1.read() != f2.read():
                     mismatches.append('The file %s is not the same'%name)
         return '\n'.join(mismatches)
@@ -1181,7 +1172,7 @@ class EpubContainer(Container):
                 if fname is not None:
                     shutil.copy(os.path.join(dirpath, fname), os.path.join(base, fname))
         else:
-            with lopen(self.pathtoepub, 'rb') as stream:
+            with open(self.pathtoepub, 'rb') as stream:
                 try:
                     zf = ZipFile(stream)
                     zf.extractall(tdir)
@@ -1292,24 +1283,7 @@ class EpubContainer(Container):
                     self.dirty('META-INF/encryption.xml')
         super().remove_item(name, remove_from_guide=remove_from_guide)
 
-    def process_encryption(self):
-        fonts = {}
-        enc = self.parsed('META-INF/encryption.xml')
-        for em in enc.xpath('//*[local-name()="EncryptionMethod" and @Algorithm]'):
-            alg = em.get('Algorithm')
-            if alg not in {ADOBE_OBFUSCATION, IDPF_OBFUSCATION}:
-                raise DRMError()
-            try:
-                cr = em.getparent().xpath('descendant::*[local-name()="CipherReference" and @URI]')[0]
-            except (IndexError, ValueError, KeyError):
-                continue
-            name = self.href_to_name(cr.get('URI'))
-            path = self.name_path_map.get(name, None)
-            if path is not None:
-                fonts[name] = alg
-        if not fonts:
-            return
-
+    def read_raw_unique_identifier(self):
         package_id = raw_unique_identifier = idpf_key = None
         for attrib, val in iteritems(self.opf.attrib):
             if attrib.endswith('unique-identifier'):
@@ -1324,6 +1298,32 @@ class EpubContainer(Container):
             idpf_key = raw_unique_identifier
             idpf_key = re.sub('[\u0020\u0009\u000d\u000a]', '', idpf_key)
             idpf_key = hashlib.sha1(idpf_key.encode('utf-8')).digest()
+        return package_id, raw_unique_identifier, idpf_key
+
+    def iter_encryption_entries(self):
+        if 'META-INF/encryption.xml' in self.name_path_map:
+            enc = self.parsed('META-INF/encryption.xml')
+            for em in enc.xpath('//*[local-name()="EncryptionMethod" and @Algorithm]'):
+                try:
+                    cr = em.getparent().xpath('descendant::*[local-name()="CipherReference" and @URI]')[0]
+                except Exception:
+                    cr = None
+                yield em, cr
+
+    def process_encryption(self):
+        fonts = {}
+        for em, cr in self.iter_encryption_entries():
+            alg = em.get('Algorithm')
+            if alg not in {ADOBE_OBFUSCATION, IDPF_OBFUSCATION}:
+                raise DRMError()
+            if cr is None:
+                continue
+            name = self.href_to_name(cr.get('URI'))
+            path = self.name_path_map.get(name, None)
+            if path is not None:
+                fonts[name] = alg
+
+        package_id, raw_unique_identifier, idpf_key = self.read_raw_unique_identifier()
         key = None
         for item in self.opf_xpath('//*[local-name()="metadata"]/*'
                                    '[local-name()="identifier"]'):
@@ -1399,12 +1399,12 @@ class EpubContainer(Container):
                     if err.errno != errno.EEXIST:
                         raise
                 for fname in filenames:
-                    with lopen(os.path.join(dirpath, fname), 'rb') as src, lopen(os.path.join(base, fname), 'wb') as dest:
+                    with open(os.path.join(dirpath, fname), 'rb') as src, open(os.path.join(base, fname), 'wb') as dest:
                         shutil.copyfileobj(src, dest)
 
         else:
             from calibre.ebooks.tweak import zip_rebuilder
-            with lopen(join(self.root, 'mimetype'), 'wb') as f:
+            with open(join(self.root, 'mimetype'), 'wb') as f:
                 et = guess_type('a.epub')
                 if not isinstance(et, bytes):
                     et = et.encode('ascii')
@@ -1434,7 +1434,7 @@ class InvalidMobi(InvalidBook):
 def do_explode(path, dest):
     from calibre.ebooks.mobi.reader.mobi6 import MobiReader
     from calibre.ebooks.mobi.reader.mobi8 import Mobi8Reader
-    with lopen(path, 'rb') as stream:
+    with open(path, 'rb') as stream:
         mr = MobiReader(stream, default_log, None, None)
 
         with CurrentDir(dest):
@@ -1447,6 +1447,7 @@ def do_explode(path, dest):
 
 def opf_to_azw3(opf, outpath, container):
     from calibre.ebooks.conversion.plumber import Plumber, create_oebbook
+    from calibre.ebooks.mobi.tweak import set_cover
 
     class Item(Manifest.Item):
 
@@ -1463,6 +1464,7 @@ def opf_to_azw3(opf, outpath, container):
     inp = plugin_for_input_format('azw3')
     outp = plugin_for_output_format('azw3')
     plumber.opts.mobi_passthrough = True
+    plumber.opts.keep_ligatures = True
     oeb = create_oebbook(container.log, opf, plumber.opts, specialize=specialize)
     set_cover(oeb)
     outp.convert(oeb, outpath, inp, plumber.opts, container.log)
@@ -1470,6 +1472,28 @@ def opf_to_azw3(opf, outpath, container):
 
 def epub_to_azw3(epub, outpath=None):
     container = get_container(epub, tweak_mode=True)
+    changed = False
+    for item in container.opf_xpath('//opf:manifest/opf:item[@properties and @href]'):
+        p = item.get('properties').split()
+        if 'cover-image' in p:
+            href = item.get('href')
+            guides = container.opf_xpath('//opf:guide')
+            if not guides:
+                guides = (container.opf.makeelement(OPF('guide')),)
+                container.opf.append(guides[0])
+            for guide in guides:
+                for child in guide:
+                    if child.get('type') == 'cover':
+                        break
+                else:
+                    guide.append(guide.makeelement(OPF('reference'), type='cover', href=href))
+                    changed = True
+            break
+        elif 'calibre:title-page' in p:
+            item.getparent().remove(item)
+    if changed:
+        container.dirty(container.opf_name)
+        container.commit_item(container.opf_name)
     outpath = outpath or (epub.rpartition('.')[0] + '.azw3')
     opf_to_azw3(container.name_to_abspath(container.opf_name), outpath, container)
 
@@ -1492,7 +1516,7 @@ class AZW3Container(Container):
             tdir = PersistentTemporaryDirectory('_azw3_container')
         tdir = os.path.abspath(os.path.realpath(tdir))
         self.root = tdir
-        with lopen(pathtoazw3, 'rb') as stream:
+        with open(pathtoazw3, 'rb') as stream:
             raw = stream.read(3)
             if raw == b'TPZ':
                 raise InvalidMobi(_('This is not a MOBI file. It is a Topaz file.'))
@@ -1561,9 +1585,18 @@ def get_container(path, log=None, tdir=None, tweak_mode=False):
         isdir = os.path.isdir(path)
     except Exception:
         isdir = False
-    ebook = (AZW3Container if path.rpartition('.')[-1].lower() in {'azw3', 'mobi', 'original_azw3', 'original_mobi'} and not isdir
-            else EpubContainer)(path, log, tdir=tdir)
-    ebook.tweak_mode = tweak_mode
+    own_tdir = not tdir
+    ebook_cls = (AZW3Container if path.rpartition('.')[-1].lower() in {'azw3', 'mobi', 'original_azw3', 'original_mobi'} and not isdir
+            else EpubContainer)
+    if own_tdir:
+        tdir = PersistentTemporaryDirectory(f'_{ebook_cls.book_type}_container')
+    try:
+        ebook = ebook_cls(path, log, tdir=tdir)
+        ebook.tweak_mode = tweak_mode
+    except BaseException:
+        if own_tdir:
+            shutil.rmtree(tdir, ignore_errors=True)
+        raise
     return ebook
 
 

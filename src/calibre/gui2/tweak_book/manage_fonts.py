@@ -4,22 +4,25 @@
 __license__ = 'GPL v3'
 __copyright__ = '2014, Kovid Goyal <kovid at kovidgoyal.net>'
 
-import sys, textwrap
+import sys
+import textwrap
 from io import BytesIO
-
 from qt.core import (
-    QSplitter, QVBoxLayout, QTableView, QWidget, QLabel, QAbstractTableModel,
-    Qt, QTimer, QPushButton, pyqtSignal, QFormLayout, QLineEdit, QIcon, QSize,
-    QHBoxLayout, QTextEdit, QApplication, QMessageBox, QAbstractItemView, QDialog, QDialogButtonBox)
+    QAbstractItemView, QAbstractTableModel, QApplication, QDialog, QDialogButtonBox,
+    QFormLayout, QHBoxLayout, QIcon, QLabel, QLineEdit, QMessageBox, QPushButton, QSize,
+    QSplitter, Qt, QTableView, QTextEdit, QTimer, QVBoxLayout, QWidget, pyqtSignal,
+)
 
 from calibre.ebooks.oeb.polish.container import get_container
-from calibre.ebooks.oeb.polish.fonts import font_family_data, change_font
+from calibre.ebooks.oeb.polish.fonts import change_font, font_family_data
 from calibre.gui2 import error_dialog, info_dialog
 from calibre.gui2.tweak_book import current_container, set_current_container
-from calibre.gui2.tweak_book.widgets import Dialog, BusyCursor
-from calibre.utils.icu import primary_sort_key as sort_key
-from calibre.utils.fonts.scanner import font_scanner, NoFonts
+from calibre.gui2.tweak_book.widgets import Dialog
+from calibre.gui2.widgets import BusyCursor
 from calibre.utils.fonts.metadata import FontMetadata, UnsupportedFont
+from calibre.utils.fonts.scanner import NoFonts, font_scanner
+from calibre.utils.icu import lower as icu_lower, primary_sort_key as sort_key
+from calibre.utils.localization import ngettext
 from polyglot.builtins import iteritems
 
 
@@ -135,7 +138,7 @@ class AllFonts(QAbstractTableModel):
         if role == Qt.ItemDataRole.TextAlignmentRole:
             col = index.column()
             if col == 0:
-                return Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter
+                return int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)  # https://bugreports.qt.io/browse/PYSIDE-1974
         if role in (Qt.ItemDataRole.UserRole, Qt.ItemDataRole.UserRole + 1):
             row = index.row()
             try:
@@ -239,8 +242,8 @@ class ManageFonts(Dialog):
         self.h = h = QHBoxLayout()
         h.setContentsMargins(0, 0, 0, 0)
         self.install_fonts_button = b = QPushButton(_('&Install fonts'), self)
-        h.addWidget(b), b.setIcon(QIcon(I('plus.png')))
-        b.setToolTip(textwrap.fill(_('Install fonts from .ttf/.otf files to make them available for embedding')))
+        h.addWidget(b), b.setIcon(QIcon.ic('plus.png'))
+        b.setToolTip(textwrap.fill(_('Install fonts from font files to make them available for embedding')))
         b.clicked.connect(self.install_fonts)
         l.addWidget(s), l.addLayout(h), h.addStretch(10), h.addWidget(self.bb)
 
@@ -261,24 +264,24 @@ class ManageFonts(Dialog):
         s.addWidget(fv), s.addWidget(c)
 
         self.cb = b = QPushButton(_('&Change selected fonts'))
-        b.setIcon(QIcon(I('wizard.png')))
+        b.setIcon(QIcon.ic('wizard.png'))
         b.clicked.connect(self.change_fonts)
         l.addWidget(b)
         self.rb = b = QPushButton(_('&Remove selected fonts'))
         b.clicked.connect(self.remove_fonts)
-        b.setIcon(QIcon(I('trash.png')))
+        b.setIcon(QIcon.ic('trash.png'))
         l.addWidget(b)
         self.eb = b = QPushButton(_('&Embed all fonts'))
-        b.setIcon(QIcon(I('embed-fonts.png')))
+        b.setIcon(QIcon.ic('embed-fonts.png'))
         b.clicked.connect(self.embed_fonts)
         l.addWidget(b)
         self.sb = b = QPushButton(_('&Subset all fonts'))
-        b.setIcon(QIcon(I('subset-fonts.png')))
+        b.setIcon(QIcon.ic('subset-fonts.png'))
         b.clicked.connect(self.subset_fonts)
         l.addWidget(b)
         self.refresh_button = b = self.bb.addButton(_('&Refresh'), QDialogButtonBox.ButtonRole.ActionRole)
         b.setToolTip(_('Rescan the book for fonts in case you have made changes'))
-        b.setIcon(QIcon(I('view-refresh.png')))
+        b.setIcon(QIcon.ic('view-refresh.png'))
         b.clicked.connect(self.refresh)
 
         self.la = la = QLabel(
@@ -317,7 +320,7 @@ class ManageFonts(Dialog):
     def display(self):
         if not self.isVisible():
             self.show()
-        self.raise_()
+        self.raise_and_focus()
         QTimer.singleShot(0, self.model.build)
 
     def get_selected_data(self):

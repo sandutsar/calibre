@@ -7,8 +7,7 @@ __docformat__ = 'restructuredtext en'
 
 import os, shutil, subprocess, tempfile, json, time, filecmp, sys
 
-from setup import Command, __version__, require_clean_git, require_git_master
-from setup.upload import installers
+from setup import Command, __version__, require_clean_git, require_git_master, installer_names
 from setup.parallel_build import parallel_build, create_job
 
 
@@ -41,7 +40,7 @@ class Stage2(Command):
         self.info('Starting builds for all platforms, this will take a while...')
 
         session = ['layout vertical']
-        platforms = 'linux', 'osx', 'win'
+        platforms = 'linux64', 'linuxarm64', 'osx', 'win'
         for x in platforms:
             cmd = (
                 '''{exe} -c "import subprocess; subprocess.Popen(['{exe}', './setup.py', '{x}']).wait() != 0 and'''
@@ -58,7 +57,7 @@ class Stage2(Command):
         p.communicate('\n'.join(session).encode('utf-8'))
         p.wait()
 
-        for installer in installers(include_source=False):
+        for installer in installer_names(include_source=False):
             installer = self.j(self.d(self.SRC), installer)
             if not os.path.exists(installer) or os.path.getsize(installer) < 10000:
                 raise SystemExit(
@@ -124,6 +123,30 @@ class PublishBetas(Command):
         subprocess.check_call((
             'rsync --partial -rh --info=progress2 --delete-after %s/ download.calibre-ebook.com:/srv/download/betas/'
             % dist
+        ).split())
+
+
+class PublishPreview(Command):
+
+    sub_commands = ['stage1', 'stage2', 'sdist']
+
+    def pre_sub_commands(self, opts):
+        version = tuple(map(int, __version__.split('.')))
+        if version[2] < 100:
+            raise SystemExit('Must set calibre version to have patch level greater than 100')
+        require_clean_git()
+        require_git_master()
+
+    def run(self, opts):
+        dist = self.a(self.j(self.d(self.SRC), 'dist'))
+        with open(os.path.join(dist, 'README.txt'), 'w') as f:
+            print('''\
+These are preview releases of changes to calibre since the last normal release.
+Preview releases are typically released every Friday, they serve as a way
+for users to test upcoming features/fixes in the next calibre release.
+''', file=f)
+        subprocess.check_call((
+            f'rsync -rh --info=progress2 --delete-after --delete {dist}/ download.calibre-ebook.com:/srv/download/preview/'
         ).split())
 
 

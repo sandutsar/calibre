@@ -10,7 +10,7 @@ import sys
 
 from bypy.constants import (
     LIBDIR, PREFIX, PYTHON, SRC as CALIBRE_DIR, build_dir, islinux, ismacos,
-    iswindows, worker_env
+    worker_env
 )
 from bypy.utils import run_shell
 
@@ -20,22 +20,21 @@ dlls = [
     'Gui',
     'Network',
     # 'NetworkAuth',
-    'Location',
     'PrintSupport',
     'WebChannel',
     # 'WebSockets',
     # 'WebView',
     'Positioning',
-    'PositioningQuick',
     'Sensors',
     'Sql',
     'Svg',
+    'WebChannel',
     'WebEngineCore',
-    'WebEngine',
     'WebEngineWidgets',
     'Widgets',
     # 'Multimedia',
     'OpenGL',
+    'OpenGLWidgets',
     'Quick',
     'QuickWidgets',
     'Qml',
@@ -46,22 +45,21 @@ dlls = [
 ]
 
 if islinux:
-    dlls += ['X11Extras', 'XcbQpa', 'WaylandClient', 'DBus']
+    dlls += ['XcbQpa', 'WaylandClient', 'WaylandEglClientHwIntegration', 'DBus']
 elif ismacos:
-    dlls += ['MacExtras', 'DBus']
-elif iswindows:
-    dlls += ['WinExtras']
+    dlls += ['DBus']
 
+QT_MAJOR = 6
 QT_DLLS = frozenset(
-    'Qt5' + x for x in dlls
+    f'Qt{QT_MAJOR}' + x for x in dlls
 )
 
 QT_PLUGINS = [
     'imageformats',
     'iconengines',
+    'tls',
     # 'mediaservice',
     'platforms',
-    'platformthemes',
     # 'playlistformats',
     'sqldrivers',
     # 'webview',
@@ -70,7 +68,9 @@ QT_PLUGINS = [
 
 if islinux:
     QT_PLUGINS += [
+        'egldeviceintegrations',
         'platforminputcontexts',
+        'platformthemes',
         'wayland-decoration-client',
         'wayland-graphics-integration-client',
         'wayland-shell-integration',
@@ -89,15 +89,14 @@ PYQT_MODULES = (
     'QtSensors',
     'QtSvg',
     'QtWidgets',
+    'QtOpenGL',
+    'QtOpenGLWidgets',
     'QtWebEngine',
     'QtWebEngineCore',
     'QtWebEngineWidgets',
     'QtWebChannel',
 )
 del dlls
-
-if iswindows:
-    PYQT_MODULES += ('QtWinExtras',)
 
 
 def read_cal_file(name):

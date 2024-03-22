@@ -40,6 +40,9 @@ class EventType(Enum):
     #: When a book format is edited, with arguments: (book_id, fmt)
     book_edited = auto()
 
+    #: When the indexing progress changes
+    indexing_progress_changed = auto()
+
 
 class EventDispatcher(Thread):
 
@@ -66,6 +69,10 @@ class EventDispatcher(Thread):
         ref = weakref.ref(callback)
         with suppress(ValueError):
             self.refs.remove(ref)
+
+    def __contains__(self, callback):
+        ref = weakref.ref(callback)
+        return ref in self.refs
 
     def __call__(self, event_name, *args):
         if self.activated:

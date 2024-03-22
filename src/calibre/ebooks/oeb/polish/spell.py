@@ -70,6 +70,9 @@ class Location:
         self.original_word = self.elided_prefix + new_word
 
 
+file_word_count = 0
+
+
 def filter_words(word):
     if not word:
         return False
@@ -80,10 +83,12 @@ def filter_words(word):
 
 
 def get_words(text, lang):
+    global file_word_count
     try:
         ans = split_into_words(str(text), lang)
     except (TypeError, ValueError):
         return ()
+    file_word_count += len(ans)
     return list(filter(filter_words, ans))
 
 
@@ -163,21 +168,37 @@ opf_spell_tags = {'title', 'creator', 'subject', 'description', 'publisher'}
 
 def read_words_from_opf(root, words, file_name, book_locale):
     for tag in root.iterdescendants('*'):
-        if tag.text is not None and barename(tag.tag) in opf_spell_tags:
+        if barename(tag.tag) in opf_spell_tags:
             if barename(tag.tag) == 'description':
-                add_words_from_escaped_html(tag.text, words, file_name, tag, 'text', book_locale)
+                if tag.text:
+                    add_words_from_escaped_html(tag.text, words, file_name, tag, 'text', book_locale)
+                for child in tag:
+                    if child.tail:
+                        add_words_from_escaped_html(child.tail, words, file_name, child, 'tail', book_locale)
             else:
-                add_words_from_text(tag, 'text', words, file_name, book_locale)
+                if tag.text:
+                    add_words_from_text(tag, 'text', words, file_name, book_locale)
+                for child in tag:
+                    if child.tail:
+                        add_words_from_text(child, 'tail', words, file_name, book_locale)
         add_words_from_attr(tag, _opf_file_as, words, file_name, book_locale)
 
 
 def count_chars_in_opf(root, counter, file_name, book_locale):
     for tag in root.iterdescendants('*'):
-        if tag.text is not None and barename(tag.tag) in opf_spell_tags:
+        if barename(tag.tag) in opf_spell_tags:
             if barename(tag.tag) == 'description':
-                count_chars_in_escaped_html(tag.text, counter, file_name, tag, 'text', book_locale)
+                if tag.text:
+                    count_chars_in_escaped_html(tag.text, counter, file_name, tag, 'text', book_locale)
+                for child in tag:
+                    if child.tail:
+                        count_chars_in_escaped_html(child.tail, counter, file_name, tag, 'tail', book_locale)
             else:
-                count_chars_in_text(tag, 'text', counter, file_name, book_locale)
+                if tag.text:
+                    count_chars_in_text(tag, 'text', counter, file_name, book_locale)
+                for child in tag:
+                    if child.tail:
+                        count_chars_in_text(tag, 'tail', counter, file_name, book_locale)
         count_chars_in_attr(tag, _opf_file_as, counter, file_name, book_locale)
 
 
@@ -201,7 +222,7 @@ html_spell_tags = {'script', 'style', 'link'}
 
 
 def read_words_from_html_tag(tag, words, file_name, parent_locale, locale):
-    if tag.text is not None and barename(tag.tag) not in html_spell_tags:
+    if tag.text is not None and isinstance(tag.tag, str) and barename(tag.tag) not in html_spell_tags:
         add_words_from_text(tag, 'text', words, file_name, locale)
     for attr in {'alt', 'title'}:
         add_words_from_attr(tag, attr, words, file_name, locale)
@@ -210,7 +231,7 @@ def read_words_from_html_tag(tag, words, file_name, parent_locale, locale):
 
 
 def count_chars_in_html_tag(tag, counter, file_name, parent_locale, locale):
-    if tag.text is not None and barename(tag.tag) not in html_spell_tags:
+    if tag.text is not None and isinstance(tag.tag, str) and barename(tag.tag) not in html_spell_tags:
         count_chars_in_text(tag, 'text', counter, file_name, locale)
     for attr in {'alt', 'title'}:
         count_chars_in_attr(tag, attr, counter, file_name, locale)
@@ -219,14 +240,15 @@ def count_chars_in_html_tag(tag, counter, file_name, parent_locale, locale):
 
 
 def locale_from_tag(tag):
-    if 'lang' in tag.attrib:
+    a = tag.attrib
+    if 'lang' in a:
         try:
             loc = parse_lang_code(tag.get('lang'))
         except ValueError:
             loc = None
         if loc is not None:
             return loc
-    if '{http://www.w3.org/XML/1998/namespace}lang' in tag.attrib:
+    if '{http://www.w3.org/XML/1998/namespace}lang' in a:
         try:
             loc = parse_lang_code(tag.get('{http://www.w3.org/XML/1998/namespace}lang'))
         except ValueError:
@@ -241,7 +263,7 @@ def read_words_from_html(root, words, file_name, book_locale):
         parent, parent_locale = stack.pop()
         locale = locale_from_tag(parent) or parent_locale
         read_words_from_html_tag(parent, words, file_name, parent_locale, locale)
-        stack.extend((tag, locale) for tag in parent.iterchildren('*'))
+        stack.extend((tag, locale) for tag in parent)
 
 
 def count_chars_in_html(root, counter, file_name, book_locale):
@@ -250,7 +272,7 @@ def count_chars_in_html(root, counter, file_name, book_locale):
         parent, parent_locale = stack.pop()
         locale = locale_from_tag(parent) or parent_locale
         count_chars_in_html_tag(parent, counter, file_name, parent_locale, locale)
-        stack.extend((tag, locale) for tag in parent.iterchildren('*'))
+        stack.extend((tag, locale) for tag in parent)
 
 
 def group_sort(locations):
@@ -258,7 +280,7 @@ def group_sort(locations):
     for loc in locations:
         if loc.file_name not in order:
             order[loc.file_name] = len(order)
-    return sorted(locations, key=lambda l:(order[l.file_name], l.sourceline))
+    return sorted(locations, key=lambda l:(order[l.file_name], l.sourceline or 0))
 
 
 def get_checkable_file_names(container):
@@ -282,7 +304,10 @@ def root_is_excluded_from_spell_check(root):
     return False
 
 
-def get_all_words(container, book_locale, get_word_count=False, excluded_files=()):
+def get_all_words(container, book_locale, get_word_count=False, excluded_files=(), file_words_counts=None):
+    global file_word_count
+    if file_words_counts is None:
+        file_words_counts = {}
     words = defaultdict(list)
     words[None] = 0
     file_names, ncx_toc = get_checkable_file_names(container)
@@ -292,12 +317,15 @@ def get_all_words(container, book_locale, get_word_count=False, excluded_files=(
         root = container.parsed(file_name)
         if root_is_excluded_from_spell_check(root):
             continue
+        file_word_count = 0
         if file_name == container.opf_name:
             read_words_from_opf(root, words, file_name, book_locale)
         elif file_name == ncx_toc:
             read_words_from_ncx(root, words, file_name, book_locale)
         elif hasattr(root, 'xpath'):
             read_words_from_html(root, words, file_name, book_locale)
+        file_words_counts[file_name] = file_word_count
+        file_word_count = 0
     count = words.pop(None)
     ans = {k:group_sort(v) for k, v in iteritems(words)}
     if get_word_count:

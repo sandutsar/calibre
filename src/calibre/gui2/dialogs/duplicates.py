@@ -6,14 +6,15 @@ __copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
 import os.path
-
 from qt.core import (
-    QDialog, QGridLayout, QIcon, QLabel, QTreeWidget, QTreeWidgetItem, Qt,
-    QFont, QDialogButtonBox, QApplication)
+    QApplication, QDialog, QDialogButtonBox, QFont, QGridLayout, QIcon, QLabel, Qt,
+    QTreeWidget, QTreeWidgetItem,
+)
 
-from calibre.gui2 import gprefs
 from calibre.ebooks.metadata import authors_to_string
+from calibre.gui2 import gprefs
 from calibre.utils.icu import primary_sort_key
+from calibre.utils.localization import ngettext
 
 
 class DuplicatesQuestion(QDialog):
@@ -26,7 +27,7 @@ class DuplicatesQuestion(QDialog):
         if len(duplicates) > 1:
             t = '%d %s' % (len(duplicates), t)
         self.setWindowTitle(t)
-        self.i = i = QIcon(I('dialog_question.png'))
+        self.i = i = QIcon.ic('dialog_question.png')
         self.setWindowIcon(i)
 
         self.l1 = l1 = QLabel()
@@ -51,17 +52,15 @@ class DuplicatesQuestion(QDialog):
         l.addWidget(bb, 2, 0, 1, 2)
         l.setColumnStretch(1, 10)
         self.ab = ab = bb.addButton(_('Select &all'), QDialogButtonBox.ButtonRole.ActionRole)
-        ab.clicked.connect(self.select_all), ab.setIcon(QIcon(I('plus.png')))
+        ab.clicked.connect(self.select_all), ab.setIcon(QIcon.ic('plus.png'))
         self.nb = ab = bb.addButton(_('Select &none'), QDialogButtonBox.ButtonRole.ActionRole)
-        ab.clicked.connect(self.select_none), ab.setIcon(QIcon(I('minus.png')))
+        ab.clicked.connect(self.select_none), ab.setIcon(QIcon.ic('minus.png'))
         self.cb = cb = bb.addButton(_('&Copy to clipboard'), QDialogButtonBox.ButtonRole.ActionRole)
-        cb.setIcon(QIcon(I('edit-copy.png')))
+        cb.setIcon(QIcon.ic('edit-copy.png'))
         cb.clicked.connect(self.copy_to_clipboard)
 
         self.resize(self.sizeHint())
-        geom = gprefs.get('duplicates-question-dialog-geometry', None)
-        if geom is not None:
-            QApplication.instance().safe_restore_geometry(self, geom)
+        self.restore_geometry(gprefs, 'duplicates-question-dialog-geometry')
         self.exec()
 
     def copy_to_clipboard(self):
@@ -87,7 +86,7 @@ class DuplicatesQuestion(QDialog):
         QDialog.accept(self)
 
     def save_geometry(self):
-        gprefs.set('duplicates-question-dialog-geometry', bytearray(self.saveGeometry()))
+        super().save_geometry(gprefs, 'duplicates-question-dialog-geometry')
 
     def process_duplicates(self, db, duplicates):
         ta = _('%(title)s by %(author)s [%(formats)s]')

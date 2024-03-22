@@ -8,29 +8,28 @@ import tempfile
 import textwrap
 from functools import partial
 from qt.core import (
-    QAbstractItemView, QApplication, QCheckBox, QCursor, QDialog, QDialogButtonBox,
-    QEvent, QFrame, QGridLayout, QIcon, QInputDialog, QItemSelectionModel,
-    QKeySequence, QLabel, QMenu, QPushButton, QScrollArea, QSize, QSizePolicy,
-    QStackedWidget, Qt, QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
-    QWidget, pyqtSignal
+    QAbstractItemView, QCheckBox, QCursor, QDialog, QDialogButtonBox, QEvent, QFrame,
+    QGridLayout, QIcon, QInputDialog, QItemSelectionModel, QKeySequence, QLabel, QMenu,
+    QPushButton, QScrollArea, QSize, QSizePolicy, QStackedWidget, Qt, QTimer,
+    QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget, pyqtSignal,
 )
 from threading import Thread
 from time import monotonic
 
-from calibre.constants import TOC_DIALOG_APP_UID, islinux, iswindows
+from calibre.constants import TOC_DIALOG_APP_UID, islinux, ismacos, iswindows
 from calibre.ebooks.oeb.polish.container import AZW3Container, get_container
 from calibre.ebooks.oeb.polish.toc import (
-    TOC, add_id, commit_toc, from_files, from_links, from_xpaths, get_toc
+    TOC, add_id, commit_toc, from_files, from_links, from_xpaths, get_toc,
 )
-from calibre.gui2 import (
-    Application, error_dialog, info_dialog, question_dialog, set_app_uid
-)
+from calibre.gui2 import Application, error_dialog, info_dialog, set_app_uid
 from calibre.gui2.convert.xpath_wizard import XPathEdit
 from calibre.gui2.progress_indicator import ProgressIndicator
 from calibre.gui2.toc.location import ItemEdit
 from calibre.ptempfile import reset_base_dir
+from calibre.startup import connect_lambda
 from calibre.utils.config import JSONConfig
 from calibre.utils.filenames import atomic_rename
+from calibre.utils.icu import lower as icu_lower, upper as icu_upper
 from calibre.utils.logging import GUILog
 
 ICON_SIZE = 24
@@ -140,7 +139,7 @@ class ItemView(QStackedWidget):  # {{{
     delete_item = pyqtSignal()
     flatten_item = pyqtSignal()
     go_to_root = pyqtSignal()
-    create_from_xpath = pyqtSignal(object, object)
+    create_from_xpath = pyqtSignal(object, object, object)
     create_from_links = pyqtSignal()
     create_from_files = pyqtSignal()
     flatten_toc = pyqtSignal()
@@ -262,11 +261,11 @@ class ItemView(QStackedWidget):  # {{{
 
         # Edit/remove item
         rs = l.rowCount()
-        ip.b1 = b = QPushButton(QIcon(I('edit_input.png')),
+        ip.b1 = b = QPushButton(QIcon.ic('edit_input.png'),
             _('Change the &location this entry points to'), self)
         b.clicked.connect(self.edit_item)
         l.addWidget(b, l.rowCount()+1, 0, 1, 2)
-        ip.b2 = b = QPushButton(QIcon(I('trash.png')),
+        ip.b2 = b = QPushButton(QIcon.ic('trash.png'),
             _('&Remove this entry'), self)
         l.addWidget(b, l.rowCount(), 0, 1, 2)
         b.clicked.connect(self.delete_item)
@@ -277,17 +276,17 @@ class ItemView(QStackedWidget):  # {{{
 
         # Add new item
         rs = l.rowCount()
-        ip.b3 = b = QPushButton(QIcon(I('plus.png')), _('New entry &inside this entry'))
+        ip.b3 = b = QPushButton(QIcon.ic('plus.png'), _('New entry &inside this entry'))
         connect_lambda(b.clicked, self, lambda self: self.add_new('inside'))
         l.addWidget(b, l.rowCount()+1, 0, 1, 2)
-        ip.b4 = b = QPushButton(QIcon(I('plus.png')), _('New entry &above this entry'))
+        ip.b4 = b = QPushButton(QIcon.ic('plus.png'), _('New entry &above this entry'))
         connect_lambda(b.clicked, self, lambda self: self.add_new('before'))
         l.addWidget(b, l.rowCount(), 0, 1, 2)
-        ip.b5 = b = QPushButton(QIcon(I('plus.png')), _('New entry &below this entry'))
+        ip.b5 = b = QPushButton(QIcon.ic('plus.png'), _('New entry &below this entry'))
         connect_lambda(b.clicked, self, lambda self: self.add_new('after'))
         l.addWidget(b, l.rowCount(), 0, 1, 2)
         # Flatten entry
-        ip.b3 = b = QPushButton(QIcon(I('heuristics.png')), _('&Flatten this entry'))
+        ip.b3 = b = QPushButton(QIcon.ic('heuristics.png'), _('&Flatten this entry'))
         b.clicked.connect(self.flatten_item)
         b.setToolTip(_('All children of this entry are brought to the same '
                        'level as this entry.'))
@@ -300,7 +299,7 @@ class ItemView(QStackedWidget):  # {{{
 
         # Return to welcome
         rs = l.rowCount()
-        ip.b4 = b = QPushButton(QIcon(I('back.png')), _('&Return to welcome screen'))
+        ip.b4 = b = QPushButton(QIcon.ic('back.png'), _('&Return to welcome screen'))
         b.clicked.connect(self.go_to_root)
         b.setToolTip(_('Go back to the top level view'))
         l.addWidget(b, l.rowCount()+1, 0, 1, 2)
@@ -314,23 +313,42 @@ class ItemView(QStackedWidget):  # {{{
         self.w2.setWordWrap(True)
         l.addWidget(la, l.rowCount(), 0, 1, 2)
 
-    def ask_if_duplicates_should_be_removed(self):
-        return not question_dialog(self, _('Remove duplicates'), _(
-            'Should headings with the same text at the same level be included?'),
-            yes_text=_('&Include duplicates'), no_text=_('&Remove duplicates'))
+    def headings_question(self, xpaths):
+        from calibre.gui2.widgets2 import Dialog
+
+        class D(Dialog):
+            def __init__(self, parent):
+                super().__init__(_('Configure ToC generation'), 'configure-toc-from-headings', parent=parent)
+
+            def setup_ui(s):
+                s.l = l = QVBoxLayout(s)
+                s.remove_duplicates_cb = rd = QCheckBox(_('Remove &duplicated headings at the same ToC level'))
+                l.addWidget(rd)
+                rd.setChecked(bool(self.prefs.get('toc_from_headings_remove_duplicates', True)))
+                s.prefer_title_cb = pt = QCheckBox(_('Use the &title attribute for ToC text'))
+                l.addWidget(pt)
+                pt.setToolTip(textwrap.fill(_(
+                    'When a heading tag has the "title" attribute use its contents as the text for the ToC entry,'
+                    ' instead of the text inside the heading tag itself.')))
+                pt.setChecked(bool(self.prefs.get('toc_from_headings_prefer_title')))
+                l.addWidget(s.bb)
+
+        d = D(self)
+        if d.exec() == QDialog.DialogCode.Accepted:
+            self.create_from_xpath.emit(xpaths, d.remove_duplicates_cb.isChecked(), d.prefer_title_cb.isChecked())
+        self.prefs.set('toc_from_headings_remove_duplicates', d.remove_duplicates_cb.isChecked())
+        self.prefs.set('toc_from_headings_prefer_title', d.prefer_title_cb.isChecked())
 
     def create_from_major_headings(self):
-        self.create_from_xpath.emit(['//h:h%d'%i for i in range(1, 4)],
-                self.ask_if_duplicates_should_be_removed())
+        self.headings_question(['//h:h%d'%i for i in range(1, 4)])
 
     def create_from_all_headings(self):
-        self.create_from_xpath.emit(['//h:h%d'%i for i in range(1, 7)],
-                self.ask_if_duplicates_should_be_removed())
+        self.headings_question(['//h:h%d'%i for i in range(1, 7)])
 
     def create_from_user_xpath(self):
         d = XPathDialog(self, self.prefs)
         if d.exec() == QDialog.DialogCode.Accepted and d.xpaths:
-            self.create_from_xpath.emit(d.xpaths, d.remove_duplicates_cb.isChecked())
+            self.create_from_xpath.emit(d.xpaths, d.remove_duplicates_cb.isChecked(), False)
 
     def hide_azw3_warning(self):
         self.w1.setVisible(False), self.w2.setVisible(False)
@@ -667,21 +685,21 @@ class TreeWidget(QTreeWidget):  # {{{
 
         if item is not None:
             m = QMenu(self)
-            m.addAction(QIcon(I('edit_input.png')), _('Change the location this entry points to'), self.edit_item)
-            m.addAction(QIcon(I('modified.png')), _('Bulk rename all selected items'), self.bulk_rename)
-            m.addAction(QIcon(I('trash.png')), _('Remove all selected items'), self.del_items)
+            m.addAction(QIcon.ic('edit_input.png'), _('Change the location this entry points to'), self.edit_item)
+            m.addAction(QIcon.ic('modified.png'), _('Bulk rename all selected items'), self.bulk_rename)
+            m.addAction(QIcon.ic('trash.png'), _('Remove all selected items'), self.del_items)
             m.addSeparator()
             ci = str(item.data(0, Qt.ItemDataRole.DisplayRole) or '')
             p = item.parent() or self.invisibleRootItem()
             idx = p.indexOfChild(item)
             if idx > 0:
-                m.addAction(QIcon(I('arrow-up.png')), (_('Move "%s" up')%ci)+key(Qt.Key.Key_Up), self.move_up)
+                m.addAction(QIcon.ic('arrow-up.png'), (_('Move "%s" up')%ci)+key(Qt.Key.Key_Up), self.move_up)
             if idx + 1 < p.childCount():
-                m.addAction(QIcon(I('arrow-down.png')), (_('Move "%s" down')%ci)+key(Qt.Key.Key_Down), self.move_down)
+                m.addAction(QIcon.ic('arrow-down.png'), (_('Move "%s" down')%ci)+key(Qt.Key.Key_Down), self.move_down)
             if item.parent() is not None:
-                m.addAction(QIcon(I('back.png')), (_('Unindent "%s"')%ci)+key(Qt.Key.Key_Left), self.move_left)
+                m.addAction(QIcon.ic('back.png'), (_('Unindent "%s"')%ci)+key(Qt.Key.Key_Left), self.move_left)
             if idx > 0:
-                m.addAction(QIcon(I('forward.png')), (_('Indent "%s"')%ci)+key(Qt.Key.Key_Right), self.move_right)
+                m.addAction(QIcon.ic('forward.png'), (_('Indent "%s"')%ci)+key(Qt.Key.Key_Right), self.move_right)
 
             m.addSeparator()
             case_menu = QMenu(_('Change case'), m)
@@ -710,35 +728,35 @@ class TOCView(QWidget):  # {{{
         self.tocw.edit_item.connect(self.edit_item)
         l.addWidget(t, 0, 0, 7, 3)
         self.up_button = b = QToolButton(self)
-        b.setIcon(QIcon(I('arrow-up.png')))
+        b.setIcon(QIcon.ic('arrow-up.png'))
         b.setIconSize(QSize(ICON_SIZE, ICON_SIZE))
         l.addWidget(b, 0, 3)
         b.setToolTip(_('Move current entry up [Ctrl+Up]'))
         b.clicked.connect(self.move_up)
 
         self.left_button = b = QToolButton(self)
-        b.setIcon(QIcon(I('back.png')))
+        b.setIcon(QIcon.ic('back.png'))
         b.setIconSize(QSize(ICON_SIZE, ICON_SIZE))
         l.addWidget(b, 2, 3)
         b.setToolTip(_('Unindent the current entry [Ctrl+Left]'))
         b.clicked.connect(self.tocw.move_left)
 
         self.del_button = b = QToolButton(self)
-        b.setIcon(QIcon(I('trash.png')))
+        b.setIcon(QIcon.ic('trash.png'))
         b.setIconSize(QSize(ICON_SIZE, ICON_SIZE))
         l.addWidget(b, 3, 3)
         b.setToolTip(_('Remove all selected entries'))
         b.clicked.connect(self.del_items)
 
         self.right_button = b = QToolButton(self)
-        b.setIcon(QIcon(I('forward.png')))
+        b.setIcon(QIcon.ic('forward.png'))
         b.setIconSize(QSize(ICON_SIZE, ICON_SIZE))
         l.addWidget(b, 4, 3)
         b.setToolTip(_('Indent the current entry [Ctrl+Right]'))
         b.clicked.connect(self.tocw.move_right)
 
         self.down_button = b = QToolButton(self)
-        b.setIcon(QIcon(I('arrow-down.png')))
+        b.setIcon(QIcon.ic('arrow-down.png'))
         b.setIconSize(QSize(ICON_SIZE, ICON_SIZE))
         l.addWidget(b, 6, 3)
         b.setToolTip(_('Move current entry down [Ctrl+Down]'))
@@ -869,9 +887,9 @@ class TOCView(QWidget):  # {{{
         self.toc = get_toc(self.ebook)
         self.toc_lang, self.toc_uid = self.toc.lang, self.toc.uid
         self.toc_title = self.toc.toc_title
-        self.blank = QIcon(I('blank.png'))
-        self.ok = QIcon(I('ok.png'))
-        self.err = QIcon(I('dot_red.png'))
+        self.blank = QIcon.ic('blank.png')
+        self.ok = QIcon.ic('ok.png')
+        self.err = QIcon.ic('dot_red.png')
         self.icon_map = {None:self.blank, True:self.ok, False:self.err}
 
         def process_item(toc_node, parent):
@@ -945,8 +963,8 @@ class TOCView(QWidget):  # {{{
         process_node(self.root, toc, nodes)
         self.highlight_item(nodes[0])
 
-    def create_from_xpath(self, xpaths, remove_duplicates=True):
-        toc = from_xpaths(self.ebook, xpaths)
+    def create_from_xpath(self, xpaths, remove_duplicates=True, prefer_title=False):
+        toc = from_xpaths(self.ebook, xpaths, prefer_title=prefer_title)
         if len(toc) == 0:
             return error_dialog(self, _('No items found'),
                 _('No items were found that could be added to the Table of Contents.'), show=True)
@@ -994,7 +1012,7 @@ class TOCEditor(QDialog):  # {{{
         t = title or os.path.basename(pathtobook)
         self.book_title = t
         self.setWindowTitle(_('Edit the ToC in %s')%t)
-        self.setWindowIcon(QIcon(I('highlight_only_on.png')))
+        self.setWindowIcon(QIcon.ic('highlight_only_on.png'))
 
         l = self.l = QVBoxLayout()
         self.setLayout(l)
@@ -1003,8 +1021,7 @@ class TOCEditor(QDialog):  # {{{
         l.addWidget(s)
         self.loading_widget = lw = QWidget(self)
         s.addWidget(lw)
-        ll = self.ll = QVBoxLayout()
-        lw.setLayout(ll)
+        ll = self.ll = QVBoxLayout(lw)
         self.pi = pi = ProgressIndicator()
         pi.setDisplaySize(QSize(200, 200))
         pi.startAnimation()
@@ -1027,19 +1044,18 @@ class TOCEditor(QDialog):  # {{{
         bb.rejected.connect(self.reject)
         self.undo_button = b = bb.addButton(_('&Undo'), QDialogButtonBox.ButtonRole.ActionRole)
         b.setToolTip(_('Undo the last action, if any'))
-        b.setIcon(QIcon(I('edit-undo.png')))
+        b.setIcon(QIcon.ic('edit-undo.png'))
         b.clicked.connect(self.toc_view.undo)
 
         self.explode_done.connect(self.read_toc, type=Qt.ConnectionType.QueuedConnection)
         self.writing_done.connect(self.really_accept, type=Qt.ConnectionType.QueuedConnection)
 
-        r = self.screen().availableSize()
-        self.resize(r.width() - 100, r.height() - 100)
-        geom = self.prefs.get('toc_editor_window_geom', None)
-        if geom is not None:
-            QApplication.instance().safe_restore_geometry(self, bytes(geom))
+        self.restore_geometry(self.prefs, 'toc_editor_window_geom')
         self.stacks.currentChanged.connect(self.update_history_buttons)
         self.update_history_buttons()
+
+    def sizeHint(self):
+        return QSize(900, 600)
 
     def update_history_buttons(self):
         self.undo_button.setVisible(self.stacks.currentIndex() == 1)
@@ -1048,6 +1064,15 @@ class TOCEditor(QDialog):  # {{{
     def add_new_item(self, item, where):
         self.item_edit(item, where)
         self.stacks.setCurrentIndex(2)
+        if ismacos:
+            QTimer.singleShot(0, self.workaround_macos_mouse_with_webview_bug)
+
+    def workaround_macos_mouse_with_webview_bug(self):
+        # macOS is weird: https://bugs.launchpad.net/calibre/+bug/2004639
+        # needed as of Qt 6.4.2
+        d = info_dialog(self, _('Loading...'), _('Loading table of contents view, please wait...'), show_copy_button=False)
+        QTimer.singleShot(0, d.reject)
+        d.exec()
 
     def accept(self):
         if monotonic() - self.last_accept_at < 1:
@@ -1067,7 +1092,7 @@ class TOCEditor(QDialog):  # {{{
             self.bb.setEnabled(False)
 
     def really_accept(self, tb):
-        self.prefs['toc_editor_window_geom'] = bytearray(self.saveGeometry())
+        self.save_geometry(self.prefs, 'toc_editor_window_geom')
         if tb:
             error_dialog(self, _('Failed to write book'),
                 _('Could not write %s. Click "Show details" for'
@@ -1088,7 +1113,7 @@ class TOCEditor(QDialog):  # {{{
             self.stacks.setCurrentIndex(1)
         else:
             self.working = False
-            self.prefs['toc_editor_window_geom'] = bytearray(self.saveGeometry())
+            self.save_geometry(self.prefs, 'toc_editor_window_geom')
             self.write_result(1)
             super().reject()
 
@@ -1110,7 +1135,7 @@ class TOCEditor(QDialog):  # {{{
         tb = None
         try:
             self.ebook = get_container(self.pathtobook, log=self.log)
-        except:
+        except Exception:
             import traceback
             tb = traceback.format_exc()
         if self.working:
@@ -1145,7 +1170,23 @@ class TOCEditor(QDialog):  # {{{
 # }}}
 
 
-def main(path=None, title=None):
+def develop():
+    from calibre.utils.webengine import setup_fake_protocol
+    setup_fake_protocol()
+    from calibre.gui2 import Application
+    app = Application([])
+    d = TOCEditor(sys.argv[-1])
+    d.start()
+    d.exec()
+    del app
+
+
+def main(shm_name=None):
+    import json
+    import struct
+
+    from calibre.utils.shm import SharedMemory
+
     # Ensure we can continue to function if GUI is closed
     os.environ.pop('CALIBRE_WORKER_TEMP_DIR', None)
     reset_base_dir()
@@ -1154,19 +1195,31 @@ def main(path=None, title=None):
         # prevents them from being grouped with viewer/editor process when
         # launched from within calibre, as both use calibre-parallel.exe
         set_app_uid(TOC_DIALOG_APP_UID)
+    with SharedMemory(name=shm_name) as shm:
+        pos = struct.calcsize('>II')
+        state, ok = struct.unpack('>II', shm.read(pos))
+        data = json.loads(shm.read_data_with_size())
+        title = data['title']
+        path = data['path']
+        s = struct.pack('>I', 1)
+        shm.seek(0), shm.write(s), shm.flush()
 
-    with open(path + '.started', 'w'):
-        pass
-    override = 'calibre-gui' if islinux else None
-    app = Application([], override_program_name=override)
-    d = TOCEditor(path, title=title, write_result_to=path + '.result')
-    d.start()
-    ret = 1
-    if d.exec() == QDialog.DialogCode.Accepted:
-        ret = 0
+        override = 'calibre-gui' if islinux else None
+        app = Application([], override_program_name=override)
+        from calibre.utils.webengine import setup_default_profile, setup_fake_protocol
+        setup_fake_protocol()
+        setup_default_profile()
+        d = TOCEditor(path, title=title, write_result_to=path + '.result')
+        d.start()
+        ok = 0
+        if d.exec() == QDialog.DialogCode.Accepted:
+            ok = 1
+        s = struct.pack('>II', 2, ok)
+        shm.seek(0), shm.write(s), shm.flush()
+
     del d
     del app
-    raise SystemExit(ret)
+    raise SystemExit(0 if ok else 1)
 
 
 if __name__ == '__main__':

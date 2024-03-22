@@ -8,10 +8,11 @@ import os
 import sys
 from functools import partial
 from qt.core import (
-    QAbstractListModel, QApplication, QCheckBox, QFormLayout, QGridLayout, QClipboard,
-    QHBoxLayout, QIcon, QInputDialog, QLabel, QLineEdit, QListView, QMenu, QPainter,
-    QPixmap, QRect, QSize, QSizePolicy, QSortFilterProxyModel, QStyledItemDelegate,
-    Qt, QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, pyqtSignal, QDialog, QDialogButtonBox
+    QAbstractListModel, QApplication, QCheckBox, QClipboard, QDialog, QDialogButtonBox,
+    QFormLayout, QGridLayout, QHBoxLayout, QIcon, QInputDialog, QLabel, QLineEdit,
+    QListView, QMenu, QPainter, QPixmap, QRect, QSize, QSizePolicy,
+    QSortFilterProxyModel, QStyledItemDelegate, Qt, QToolButton, QTreeWidget,
+    QTreeWidgetItem, QVBoxLayout, pyqtSignal,
 )
 
 from calibre import fit_image
@@ -23,6 +24,7 @@ from calibre.gui2.tweak_book import current_container, tprefs
 from calibre.gui2.tweak_book.file_list import name_is_ok
 from calibre.gui2.tweak_book.widgets import Dialog
 from calibre.ptempfile import PersistentTemporaryFile
+from calibre.startup import connect_lambda
 from calibre.utils.icu import numeric_sort_key
 from calibre.utils.localization import canonicalize_lang, get_lang
 from calibre_extensions.progress_indicator import set_no_activate_on_click
@@ -226,7 +228,7 @@ class InsertImage(Dialog):
         self.fm = fm = QSortFilterProxyModel(self.view)
         self.fm.setDynamicSortFilter(self.for_browsing)
         fm.setSourceModel(self.model)
-        fm.setFilterCaseSensitivity(False)
+        fm.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         v.setModel(fm)
         l.addWidget(v, 1, 0, 1, 2)
         v.pressed.connect(self.pressed)
@@ -236,7 +238,7 @@ class InsertImage(Dialog):
         f.setPlaceholderText(_('Search for image by file name'))
         l.addWidget(f, 2, 0)
         self.cb = b = QToolButton(self)
-        b.setIcon(QIcon(I('clear_left.png')))
+        b.setIcon(QIcon.ic('clear_left.png'))
         b.clicked.connect(f.clear)
         l.addWidget(b, 2, 1)
         f.textChanged.connect(self.filter_changed)
@@ -246,17 +248,17 @@ class InsertImage(Dialog):
             self.bb.addButton(QDialogButtonBox.StandardButton.Close)
             b = self.refresh_button = self.bb.addButton(_('&Refresh'), QDialogButtonBox.ButtonRole.ActionRole)
             b.clicked.connect(self.refresh)
-            b.setIcon(QIcon(I('view-refresh.png')))
+            b.setIcon(QIcon.ic('view-refresh.png'))
             b.setToolTip(_('Refresh the displayed images'))
             self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, False)
         else:
             b = self.import_button = self.bb.addButton(_('&Import image'), QDialogButtonBox.ButtonRole.ActionRole)
             b.clicked.connect(self.import_image)
-            b.setIcon(QIcon(I('view-image.png')))
+            b.setIcon(QIcon.ic('view-image.png'))
             b.setToolTip(_('Import an image from elsewhere in your computer'))
             b = self.paste_button = self.bb.addButton(_('&Paste image'), QDialogButtonBox.ButtonRole.ActionRole)
             b.clicked.connect(self.paste_image)
-            b.setIcon(QIcon(I('edit-paste.png')))
+            b.setIcon(QIcon.ic('edit-paste.png'))
             b.setToolTip(_('Paste an image from the clipboard'))
             self.fullpage = f = QCheckBox(_('Full page image'), self)
             f.setToolTip(_('Insert the image so that it takes up an entire page when viewed in a reader'))
@@ -272,10 +274,10 @@ class InsertImage(Dialog):
             h.addWidget(f), h.addStretch(10), h.addWidget(a)
         b = self.bb.addButton(_('&Zoom in'), QDialogButtonBox.ButtonRole.ActionRole)
         b.clicked.connect(self.zoom_in)
-        b.setIcon(QIcon(I('plus.png')))
+        b.setIcon(QIcon.ic('plus.png'))
         b = self.bb.addButton(_('Zoom &out'), QDialogButtonBox.ButtonRole.ActionRole)
         b.clicked.connect(self.zoom_out)
-        b.setIcon(QIcon(I('minus.png')))
+        b.setIcon(QIcon.ic('minus.png'))
         l.addWidget(self.bb, 4, 0, 1, 2)
 
     def full_page_image_toggled(self):
@@ -394,7 +396,7 @@ class ChooseFolder(Dialog):  # {{{
         self.root = QTreeWidgetItem(f, ('/',))
 
         def process(node, parent):
-            parent.setIcon(0, QIcon(I('mimetypes/dir.png')))
+            parent.setIcon(0, QIcon.ic('mimetypes/dir.png'))
             for child in sorted(node, key=numeric_sort_key):
                 c = QTreeWidgetItem(parent, (child,))
                 process(node[child], c)
@@ -409,14 +411,14 @@ class ChooseFolder(Dialog):  # {{{
         if item is None:
             return
         m = QMenu(self)
-        m.addAction(QIcon(I('mimetypes/dir.png')), _('Create new folder'), partial(self.create_folder, item))
+        m.addAction(QIcon.ic('mimetypes/dir.png'), _('Create new folder'), partial(self.create_folder, item))
         m.popup(self.folders.mapToGlobal(point))
 
     def create_folder(self, item):
         text, ok = QInputDialog.getText(self, _('Folder name'), _('Enter a name for the new folder'))
         if ok and str(text):
             c = QTreeWidgetItem(item, (str(text),))
-            c.setIcon(0, QIcon(I('mimetypes/dir.png')))
+            c.setIcon(0, QIcon.ic('mimetypes/dir.png'))
             for item in self.folders.selectedItems():
                 item.setSelected(False)
             c.setSelected(True)
